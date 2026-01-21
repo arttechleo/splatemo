@@ -129,6 +129,7 @@ const material = new THREE.ShaderMaterial({
 })
 
 let splatPoints: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null
+let plyData: PlyData | null = null
 
 const settings = {
   count: Number(densityInput.value),
@@ -139,6 +140,132 @@ const palette = (t: number) => {
   const color = new THREE.Color()
   color.setHSL((0.62 + t * 0.35) % 1, 0.72, 0.58)
   return color
+}
+
+type PlyData = {
+  count: number
+  positions: Float32Array
+  colors: Float32Array | null
+  opacities: Float32Array | null
+  bounds: { min: THREE.Vector3; max: THREE.Vector3 }
+}
+
+const parsePly = (text: string): PlyData => {
+  const lines = text.split(/\r?\n/)
+  let format = ''
+  let vertexCount = 0
+  let properties: string[] = []
+  let inVertexElement = false
+  let dataStart = 0
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (!line) continue
+    if (line.startsWith('format')) {
+      format = line
+      continue
+    }
+    if (line.startsWith('element vertex')) {
+      vertexCount = Number(line.split(' ').at(-1))
+      inVertexElement = true
+      continue
+    }
+    if (line.startsWith('element') && !line.startsWith('element vertex')) {
+      inVertexElement = false
+      continue
+    }
+    if (inVertexElement && line.startsWith('property')) {
+      const tokens = line.split(' ')
+      properties.push(tokens[tokens.length - 1])
+      continue
+    }
+    if (line === 'end_header') {
+      dataStart = i + 1
+      break
+    }
+  }
+
+  if (!format.includes('ascii')) {
+    throw new Error('Only ASCII PLY files are supported')
+  }
+
+  const xIndex = properties.indexOf('x')
+  const yIndex = properties.indexOf('y')
+  const zIndex = properties.indexOf('z')
+  if (xIndex === -1 || yIndex === -1 || zIndex === -1) {
+    throw new Error('PLY is missing position attributes')
+  }
+
+  const colorIndices = [
+    properties.indexOf('red'),
+    properties.indexOf('green'),
+    properties.indexOf('blue'),
+  ]
+  const altColorIndices = [
+    properties.indexOf('r'),
+    properties.indexOf('g'),
+    properties.indexOf('b'),
+  ]
+  const useAltColors = colorIndices.some((index) => index === -1)
+  const [rIndex, gIndex, bIndex] = useAltColors ? altColorIndices : colorIndices
+  const hasColors = rIndex !== -1 && gIndex !== -1 && bIndex !== -1
+
+  const opacityIndex =
+    properties.indexOf('alpha') !== -1
+      ? properties.indexOf('alpha')
+      : properties.indexOf('opacity')
+
+  const positions = new Float32Array(vertexCount * 3)
+  const colors = hasColors ? new Float32Array(vertexCount * 3) : null
+  const opacities = opacityIndex !== -1 ? new Float32Array(vertexCount) : null
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity)
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity)
+
+  for (let i = 0; i < vertexCount; i += 1) {
+    const line = lines[dataStart + i]
+    if (!line) continue
+    const values = line.trim().split(/\s+/).map(Number)
+    const positionIndex = i * 3
+    const x = values[xIndex]
+    const y = values[yIndex]
+    const z = values[zIndex]
+    positions[positionIndex] = x
+    positions[positionIndex + 1] = y
+    positions[positionIndex + 2] = z
+    min.min(new THREE.Vector3(x, y, z))
+    max.max(new THREE.Vector3(x, y, z))
+
+    if (colors) {
+      const r = values[rIndex] ?? 255
+      const g = values[gIndex] ?? 255
+      const b = values[bIndex] ?? 255
+      colors[positionIndex] = r / 255
+      colors[positionIndex + 1] = g / 255
+      colors[positionIndex + 2] = b / 255
+    }
+
+    if (opacities) {
+      const a = values[opacityIndex] ?? 255
+      opacities[i] = THREE.MathUtils.clamp(a / 255, 0.1, 1)
+    }
+  }
+
+  return {
+    count: vertexCount,
+    positions,
+    colors,
+    opacities,
+    bounds: { min, max },
+  }
+}
+
+const loadPly = async (url: string) => {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to load PLY: ${response.status}`)
+  }
+  const text = await response.text()
+  return parsePly(text)
 }
 
 const createSplatGeometry = (count: number, radius: number) => {
@@ -182,13 +309,71 @@ const createSplatGeometry = (count: number, radius: number) => {
   return geometry
 }
 
+const createPlyGeometry = (data: PlyData, count: number, radius: number) => {
+  const targetCount = Math.min(count, data.count)
+  const positions = new Float32Array(targetCount * 3)
+  const colors = new Float32Array(targetCount * 3)
+  const sizes = new Float32Array(targetCount)
+  const opacities = new Float32Array(targetCount)
+
+  const center = data.bounds.min.clone().add(data.bounds.max).multiplyScalar(0.5)
+  const size = data.bounds.max.clone().sub(data.bounds.min)
+  const maxExtent = Math.max(size.x, size.y, size.z)
+  const scale = maxExtent > 0 ? radius / (maxExtent * 0.5) : 1
+
+  const step = Math.max(1, Math.floor(data.count / targetCount))
+  const offset = Math.floor(Math.random() * step)
+
+  for (let i = 0; i < targetCount; i += 1) {
+    const sourceIndex = (offset + i * step) % data.count
+    const sourcePositionIndex = sourceIndex * 3
+    const targetPositionIndex = i * 3
+
+    const x = (data.positions[sourcePositionIndex] - center.x) * scale
+    const y = (data.positions[sourcePositionIndex + 1] - center.y) * scale
+    const z = (data.positions[sourcePositionIndex + 2] - center.z) * scale
+
+    positions[targetPositionIndex] = x
+    positions[targetPositionIndex + 1] = y
+    positions[targetPositionIndex + 2] = z
+
+    if (data.colors) {
+      colors[targetPositionIndex] = data.colors[sourcePositionIndex]
+      colors[targetPositionIndex + 1] = data.colors[sourcePositionIndex + 1]
+      colors[targetPositionIndex + 2] = data.colors[sourcePositionIndex + 2]
+    } else {
+      const color = palette(i / targetCount)
+      colors[targetPositionIndex] = color.r
+      colors[targetPositionIndex + 1] = color.g
+      colors[targetPositionIndex + 2] = color.b
+    }
+
+    sizes[i] = THREE.MathUtils.lerp(8, 22, Math.random())
+    if (data.opacities) {
+      opacities[i] = data.opacities[sourceIndex]
+    } else {
+      opacities[i] = THREE.MathUtils.lerp(0.3, 0.9, Math.random())
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1))
+  geometry.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1))
+  geometry.computeBoundingSphere()
+  return geometry
+}
+
 const rebuildSplats = () => {
   if (splatPoints) {
     splatPoints.geometry.dispose()
     scene.remove(splatPoints)
   }
 
-  const geometry = createSplatGeometry(settings.count, settings.radius)
+  const geometry = plyData
+    ? createPlyGeometry(plyData, settings.count, settings.radius)
+    : createSplatGeometry(settings.count, settings.radius)
   splatPoints = new THREE.Points(geometry, material)
   scene.add(splatPoints)
 
@@ -235,9 +420,39 @@ regenerateButton.addEventListener('click', () => {
 const resizeObserver = new ResizeObserver(() => resizeRenderer())
 resizeObserver.observe(canvas.parentElement ?? canvas)
 
+const updateDensityRange = (total: number) => {
+  const minCount = Math.max(100, Math.min(1000, total))
+  densityInput.min = String(minCount)
+  densityInput.max = String(total)
+  densityInput.step = String(Math.max(50, Math.floor(total / 200)))
+  settings.count = Math.min(Number(densityInput.value), total)
+  densityInput.value = String(settings.count)
+}
+
+const focusOnBounds = (bounds: PlyData['bounds']) => {
+  const center = bounds.min.clone().add(bounds.max).multiplyScalar(0.5)
+  const size = bounds.max.clone().sub(bounds.min)
+  const radius = Math.max(size.x, size.y, size.z)
+  controls.target.copy(center)
+  camera.position.set(center.x, center.y + radius * 0.4, center.z + radius * 2.4)
+  camera.updateProjectionMatrix()
+}
+
+const initSplats = async () => {
+  try {
+    plyData = await loadPly('/splats/gs_Isetta_Car.ply')
+    updateDensityRange(plyData.count)
+    focusOnBounds(plyData.bounds)
+  } catch (error) {
+    console.warn('Falling back to procedural splats', error)
+  } finally {
+    rebuildSplats()
+  }
+}
+
 setPixelRatio()
 resizeRenderer()
-rebuildSplats()
+void initSplats()
 
 const clock = new THREE.Clock()
 
