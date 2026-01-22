@@ -34,6 +34,7 @@ export class SplatEngine {
   state: EngineState = 'BOOT'
   private viewer: any | null = null
   private scene: THREE.Scene | null = null
+  private container: HTMLElement | null = null
   private manifest: ManifestEntry[] = []
   private currentEntryId: string | null = null
   private target = new THREE.Vector3(0, 0, 0)
@@ -47,6 +48,7 @@ export class SplatEngine {
 
   async mount(container: HTMLElement): Promise<void> {
     if (this.state !== 'BOOT') return
+    this.container = container
     this.scene = new THREE.Scene()
     this.viewer = new GaussianSplats3D.Viewer({
       rootElement: container,
@@ -94,6 +96,7 @@ export class SplatEngine {
     this.viewer?.dispose?.()
     this.viewer = null
     this.scene = null
+    this.container = null
     this.state = 'BOOT'
   }
 
@@ -124,6 +127,7 @@ export class SplatEngine {
       this.emitError(new Error('Splat object missing after load.'))
       return
     }
+    this.attachSplatRenderable()
     this.state = 'READY'
     this.assertInvariants('loadSplat')
   }
@@ -225,6 +229,7 @@ export class SplatEngine {
     if (now - this.lastInvariantLog < 500) return
     this.lastInvariantLog = now
     const mesh = this.splatMesh ?? this.resolveSplatObject()
+    const canonicalScene = this.getCanonicalScene()
     if (!mesh) {
       const elapsed = performance.now() - this.splatResolveStart
       if (elapsed < 1500) {
@@ -236,9 +241,11 @@ export class SplatEngine {
       }
       return
     }
-    if (!mesh.parent) {
-      console.error(`RENDER INVARIANT FAILED [${stage}]: splat not attached to scene.`)
-      this.tryRecovery()
+    if (!canonicalScene) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: canonical scene missing.`)
+    } else if (!this.isAttachedToScene(mesh as THREE.Object3D, canonicalScene)) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: splat not attached to canonical scene.`)
+      this.attachSplatRenderable()
     }
     if (mesh.visible === false) {
       console.error(`RENDER INVARIANT FAILED [${stage}]: splat visibility false.`)
@@ -259,13 +266,16 @@ export class SplatEngine {
     if (this.viewer?.renderer?.getContext().isContextLost()) {
       console.error(`RENDER INVARIANT FAILED [${stage}]: WebGL context lost.`)
     }
+    if (this.container && this.viewer?.renderer?.domElement) {
+      const attached = this.container.contains(this.viewer.renderer.domElement)
+      if (!attached) {
+        console.error(`RENDER INVARIANT FAILED [${stage}]: renderer DOM not attached to container.`)
+      }
+    }
   }
 
   private tryRecovery(): void {
-    if (!this.viewer || !this.scene) return
-    if (this.viewer.splatMesh && !this.viewer.splatMesh.parent) {
-      this.scene.add(this.viewer.splatMesh)
-    }
+    this.attachSplatRenderable()
     this.setCameraPose(this.defaultPose)
   }
 
@@ -279,6 +289,36 @@ export class SplatEngine {
     return null
   }
 
+  private getCanonicalScene(): THREE.Scene | null {
+    if (!this.viewer) return this.scene
+    const viewerAny = this.viewer as { scene?: THREE.Scene; threeScene?: THREE.Scene }
+    return viewerAny.threeScene ?? viewerAny.scene ?? this.scene
+  }
+
+  private attachSplatRenderable(): void {
+    const mesh = this.resolveSplatObject()
+    const scene = this.getCanonicalScene()
+    if (!mesh || !scene) return
+    const object = mesh as THREE.Object3D
+    if (!this.isAttachedToScene(object, scene)) {
+      scene.add(object)
+      if (mesh.visible === false) mesh.visible = true
+      if (mesh.material && typeof mesh.material.opacity === 'number' && mesh.material.opacity <= 0) {
+        mesh.material.opacity = 1
+      }
+      console.log('Attached splat renderable to canonical scene.')
+    }
+  }
+
+  private isAttachedToScene(obj: THREE.Object3D, scene: THREE.Scene): boolean {
+    let current: THREE.Object3D | null = obj
+    while (current) {
+      if (current === scene) return true
+      current = current.parent
+    }
+    return false
+  }
+
   private async waitForSplatObject(): Promise<void> {
     const start = performance.now()
     while (performance.now() - start < 1500) {
@@ -290,9 +330,12 @@ export class SplatEngine {
 
   private logDiagnostics(): void {
     const viewerAny = this.viewer as { splatMesh?: unknown; scene?: THREE.Scene }
-    const scene = this.scene
+    const scene = this.getCanonicalScene()
     console.error('Diagnostics: viewer.splatMesh', viewerAny?.splatMesh)
-    console.error('Diagnostics: scene children', scene?.children?.map((child) => child.type))
+    console.error('Diagnostics: scene id', scene?.uuid, 'children', scene?.children?.map((child) => child.type))
+    if (this.viewer?.renderer) {
+      console.error('Diagnostics: renderer', this.viewer.renderer.domElement)
+    }
     const camera = this.getCamera()
     if (camera) {
       console.error('Diagnostics: camera position', camera.position.toArray())
