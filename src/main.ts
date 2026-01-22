@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { AnnotationManager, type Annotation } from './annotations/AnnotationManager'
 import { ParticleDisintegration } from './transitions/ParticleDisintegration'
-import { ParticleOverlay } from './transitions/ParticleOverlay'
+import { SplatTransitionOverlay } from './transitions/SplatTransitionOverlay'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -107,7 +107,7 @@ let currentSplatMesh:
   | null = null
 
 const particleSystem = new ParticleDisintegration(threeScene)
-const particleOverlay = new ParticleOverlay(app)
+const splatTransitionOverlay = new SplatTransitionOverlay(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
@@ -312,9 +312,8 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
   } catch (error) {
     console.error('[LOAD] failed', error)
     hideLoadingIndicator()
-    // Stop particle overlay on error
     if (isMobile) {
-      particleOverlay.stop()
+      splatTransitionOverlay.endTransition()
     }
     throw error
   }
@@ -380,10 +379,9 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     console.error('[LOAD] error', error)
     loadState = 'IDLE'
     hideLoading()
-    
-    // Stop particle overlay on error
+
     if (isMobile) {
-      particleOverlay.stop()
+      splatTransitionOverlay.endTransition()
     }
 
     // Retry once automatically
@@ -679,34 +677,33 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
 
   console.log('[NAV] index', currentIndex, '->', targetIndex)
 
-  // Start particle overlay immediately (mobile)
-  if (isMobile) {
-    particleOverlay.start(direction === 'next' ? 'down' : 'up')
-  }
+  const sourceCanvas = viewer.renderer?.domElement ?? null
 
-  if (currentSplatMesh) {
-    const particleCount = particleSystem.start(currentSplatMesh, direction === 'next' ? 'down' : 'up')
-    console.log('[NAV] particle disintegration start', particleCount)
+  if (isMobile) {
+    splatTransitionOverlay.startTransition(
+      direction === 'next' ? 'up' : 'down',
+      sourceCanvas
+    )
+  } else if (currentSplatMesh) {
+    particleSystem.start(currentSplatMesh, direction === 'next' ? 'down' : 'up')
   }
 
   const transitionStart = performance.now()
-  const transitionDuration = 750
+  const transitionDuration = isMobile ? 0 : 750
   const renderModeSetter = viewer as unknown as { setRenderMode?: (mode: number) => void }
   renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.Always)
 
   const tick = async (time: number) => {
-    particleSystem.update(time)
+    if (!isMobile) particleSystem.update(time)
     if (time - transitionStart < transitionDuration) {
       requestAnimationFrame(tick)
       return
     }
-    console.log('[NAV] particle disintegration end')
     await loadSplat(targetIndex)
     renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
     isTransitioning = false
-    // Fade out particle overlay when new splat is visible
     if (isMobile) {
-      particleOverlay.fadeOut()
+      splatTransitionOverlay.endTransition()
     }
   }
   requestAnimationFrame(tick)
