@@ -658,7 +658,9 @@ const setAnnotationsForEntry = (id: string) => {
 }
 
 const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
-  if (isTransitioning || splatEntries.length < 2) return
+  // Disable navigation if only one splat
+  if (splatEntries.length < 2) return
+  if (isTransitioning) return
 
   // If currently loading, queue the navigation
   if (loadState === 'LOADING') {
@@ -745,10 +747,11 @@ const setupSplatNavigation = () => {
   let initialOrbitPitch = 0
   const MIN_DISTANCE = 1.5
   const MAX_DISTANCE = 12
-  const ZOOM_SENSITIVITY = 0.01
+  const ZOOM_SENSITIVITY = 0.015
   const ORBIT_SENSITIVITY = 0.008
   const PITCH_MAX = 15 * (Math.PI / 180) // 15 degrees in radians
-  const PINCH_THRESHOLD_PX = 20 // pixels of distance change to detect pinch
+  const PINCH_THRESHOLD_PX = 15 // pixels of distance change to detect pinch
+  const DEBUG_PINCH_ZOOM = false
 
   const getDistance = (t1: Touch, t2: Touch): number => {
     const dx = t2.clientX - t1.clientX
@@ -896,9 +899,31 @@ const setupSplatNavigation = () => {
       if (twoFingerMode === 'PINCH_ZOOM') {
         // Pinch zoom only - ignore rotation
         const distanceDelta = currentDistance - initialPinchDistance
-        const zoomFactor = 1 - distanceDelta * ZOOM_SENSITIVITY
-        const newDistance = initialCameraDistance * zoomFactor
+        // Fingers apart (positive delta) = zoom IN (decrease camera distance)
+        // Fingers together (negative delta) = zoom OUT (increase camera distance)
+        // Scale factor: positive delta reduces distance, negative delta increases distance
+        const scaleFactor = 1 - distanceDelta * ZOOM_SENSITIVITY
+        const newDistance = initialCameraDistance * scaleFactor
         setCameraDistance(newDistance)
+
+        // Update OrbitControls if it has an update method
+        const orbitControls = viewer.controls as unknown as { update?: () => void } | null
+        if (orbitControls?.update) {
+          orbitControls.update()
+        }
+
+        if (DEBUG_PINCH_ZOOM) {
+          const actualDistance = getCameraDistance()
+          console.log('[PINCH]', {
+            initialPinch: initialPinchDistance.toFixed(1),
+            currentPinch: currentDistance.toFixed(1),
+            delta: distanceDelta.toFixed(1),
+            scaleFactor: scaleFactor.toFixed(3),
+            initialCamDist: initialCameraDistance.toFixed(2),
+            newCamDist: newDistance.toFixed(2),
+            actualCamDist: actualDistance.toFixed(2),
+          })
+        }
       } else if (twoFingerMode === 'TWO_FINGER_ORBIT') {
         // Two-finger drag orbit only - ignore zoom
         const prevCenter = twoFingerTouches.size === 2
