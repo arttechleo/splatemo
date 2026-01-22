@@ -7,7 +7,13 @@
   {
     "id": "gs_Isetta_Car",
     "name": "Gs Isetta Car",
-    "file": "gs_Isetta_Car.ply"
+    "file": "gs_Isetta_Car.ply",
+    "cameraPoses": [
+      {
+        "position": [0, 0, 6],
+        "target": [0, 0, 0]
+      }
+    ]
   },
   {
     "id": "windowsxpWallpaper",

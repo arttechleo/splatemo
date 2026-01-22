@@ -1,4 +1,5 @@
 import './style.css'
+import * as THREE from 'three'
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -60,6 +61,10 @@ type SplatEntry = {
   id: string
   name?: string
   file: string
+  cameraPoses?: Array<{
+    position: [number, number, number]
+    target: [number, number, number]
+  }>
 }
 
 const splatCache = new Map<string, string>()
@@ -67,6 +72,8 @@ let splatEntries: SplatEntry[] = []
 let currentIndex = 0
 let hasScene = false
 let isLoading = false
+let currentPoses: SplatEntry['cameraPoses'] = undefined
+let isSnapping = false
 
 const logSplatHead = async (url: string) => {
   try {
@@ -136,6 +143,7 @@ const loadSplat = async (index: number) => {
   currentIndex = index
   hasScene = true
   isLoading = false
+  currentPoses = entry.cameraPoses
 
   const nextIndex = (currentIndex + 1) % splatEntries.length
   if (splatEntries[nextIndex]) {
@@ -145,13 +153,122 @@ const loadSplat = async (index: number) => {
 
 const setupOrbitControls = () => {
   if (!viewer.controls) return
+  const controls = viewer.controls as unknown as {
+    enableZoom: boolean
+    enablePan: boolean
+    enableRotate: boolean
+    enableDamping: boolean
+    dampingFactor: number
+    addEventListener: (event: string, callback: () => void) => void
+    target: THREE.Vector3
+  }
+  controls.enableDamping = true
+  controls.dampingFactor = 0.08
   viewer.controls.enableZoom = false
   viewer.controls.enablePan = false
   viewer.controls.enableRotate = true
+  controls.addEventListener('change', () => {
+    const camera = viewer.camera
+    if (!camera) return
+    const pos = camera.position
+    console.log('Orbit change', pos.x, pos.y, pos.z, 'target', controls.target.toArray())
+  })
 }
 
 const setupPoseSnapping = () => {
-  // placeholder for future camera pose snapping
+  const camera = viewer.camera
+  const controls = viewer.controls as
+    | (THREE.EventDispatcher & { enabled: boolean; target: THREE.Vector3 })
+    | undefined
+  if (!camera || !controls) return
+
+  const snapToPose = (pose: NonNullable<SplatEntry['cameraPoses']>[number]) => {
+    if (isSnapping) return
+    isSnapping = true
+    controls.enabled = false
+
+    console.log('Snap start', {
+      targetPose: pose,
+      currentPosition: camera.position.toArray(),
+    })
+
+    const startPos = camera.position.clone()
+    const startTarget = controls.target.clone()
+    const endPos = new THREE.Vector3(...pose.position)
+    const endTarget = new THREE.Vector3(...pose.target)
+    const startTime = performance.now()
+    const duration = 600
+
+    const animate = (time: number) => {
+      const t = Math.min(1, (time - startTime) / duration)
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      camera.position.lerpVectors(startPos, endPos, eased)
+      controls.target.lerpVectors(startTarget, endTarget, eased)
+      if (t < 1) {
+        requestAnimationFrame(animate)
+      } else {
+        controls.enabled = true
+        isSnapping = false
+        console.log('Snap end', {
+          newPosition: camera.position.toArray(),
+          orbitEnabled: controls.enabled,
+        })
+      }
+    }
+
+    requestAnimationFrame(animate)
+  }
+
+  const handleSnap = () => {
+    if (!currentPoses?.length) {
+      console.warn('No camera poses available for snap')
+      return
+    }
+    snapToPose(currentPoses[0])
+  }
+
+  let lastTapTime = 0
+  viewerRoot.addEventListener('pointerup', () => {
+    const now = Date.now()
+    if (now - lastTapTime < 320) {
+      handleSnap()
+    }
+    lastTapTime = now
+  })
+
+  viewerRoot.addEventListener('dblclick', () => {
+    handleSnap()
+  })
+}
+
+const setupPointerDebug = () => {
+  const logPointer = (event: PointerEvent, phase: string) => {
+    console.log(`Pointer ${phase}`, event.pointerId, event.pointerType)
+  }
+
+  viewerRoot.addEventListener('pointerdown', (event) => {
+    logPointer(event, 'down')
+    try {
+      viewerRoot.setPointerCapture(event.pointerId)
+    } catch (error) {
+      console.warn('setPointerCapture failed', event.pointerId, error)
+    }
+  })
+
+  viewerRoot.addEventListener('pointermove', (event) => {
+    logPointer(event, 'move')
+  })
+
+  viewerRoot.addEventListener('pointerup', (event) => {
+    logPointer(event, 'up')
+    try {
+      if (viewerRoot.hasPointerCapture(event.pointerId)) {
+        viewerRoot.releasePointerCapture(event.pointerId)
+      }
+    } catch (error) {
+      console.warn('releasePointerCapture failed', event.pointerId, error)
+    }
+  })
 }
 
 const setupSplatNavigation = () => {
@@ -159,8 +276,12 @@ const setupSplatNavigation = () => {
 }
 
 const start = async () => {
+  console.log('Device', isMobile ? 'mobile' : 'desktop')
+  console.log('Renderer pixel ratio', viewer.renderer?.getPixelRatio())
   splatEntries = await loadManifest()
   await loadSplat(0)
+  currentPoses = splatEntries[0]?.cameraPoses
+  setupPointerDebug()
   setupOrbitControls()
   setupPoseSnapping()
   setupSplatNavigation()
