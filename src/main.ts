@@ -32,10 +32,20 @@ app.appendChild(annotationsRoot)
 const overlay = createOverlay()
 app.appendChild(overlay)
 
+const hint = document.createElement('div')
+hint.className = 'feed-hint'
+hint.textContent = 'Swipe to next'
+app.appendChild(hint)
+
+const transitionMask = document.createElement('div')
+transitionMask.className = 'transition-mask'
+app.appendChild(transitionMask)
+
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
 const ENABLE_VIEW_DEPENDENT_LOADING = false
 const DEBUG_CONTROLS = true
+const DEBUG_FEED = true
 const orbitTarget = new THREE.Vector3(0, 0, 0)
 let orbitController: ReturnType<typeof createOrbitController> | null = null
 
@@ -121,6 +131,8 @@ let isLoading = false
 let isTransitioning = false
 let currentPoses: SplatEntry['cameraPoses'] = undefined
 let isSnapping = false
+type FeedState = 'IDLE_VIEWING' | 'TRANSITION_OUT' | 'LOADING_NEXT' | 'TRANSITION_IN'
+let feedState: FeedState = 'IDLE_VIEWING'
 
 const logSplatHead = async (url: string) => {
   try {
@@ -328,9 +340,11 @@ const setAnnotationsForEntry = (id: string) => {
 }
 
 const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
-  if (isTransitioning || splatEntries.length < 2) return
+  if (isTransitioning || splatEntries.length < 2 || feedState !== 'IDLE_VIEWING') return
   isTransitioning = true
+  feedState = 'TRANSITION_OUT'
   console.log('Scroll delta', delta)
+  if (DEBUG_FEED) console.log('State', feedState, 'direction', direction)
 
   const targetIndex =
     direction === 'next'
@@ -344,29 +358,61 @@ const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
   }
 
   const transitionStart = performance.now()
-  const transitionDuration = 750
+  const transitionDuration = 700
   const renderModeSetter = viewer as unknown as { setRenderMode?: (mode: number) => void }
   renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.Always)
+  transitionMask.style.opacity = '0'
+  transitionMask.classList.add('transition-mask--active')
+  orbitController?.setEnabled(false)
 
   const tick = async (time: number) => {
     particleSystem.update(time)
+    const progress = Math.min(1, (time - transitionStart) / transitionDuration)
+    transitionMask.style.opacity = String(0.8 * progress)
+    if (DEBUG_FEED && Math.abs(progress % 0.25) < 0.02) {
+      console.log('Transition out progress', Math.round(progress * 100))
+    }
     if (time - transitionStart < transitionDuration) {
       requestAnimationFrame(tick)
       return
     }
     console.log('Particle disintegration end')
+    feedState = 'LOADING_NEXT'
+    if (DEBUG_FEED) console.log('State', feedState)
     await loadSplat(targetIndex)
-    renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
-    isTransitioning = false
+    feedState = 'TRANSITION_IN'
+    if (DEBUG_FEED) console.log('State', feedState)
+    const fadeStart = performance.now()
+    const fadeDuration = 500
+    const fade = (fadeTime: number) => {
+      const fadeProgress = Math.min(1, (fadeTime - fadeStart) / fadeDuration)
+      transitionMask.style.opacity = String(0.8 * (1 - fadeProgress))
+      if (DEBUG_FEED && Math.abs(fadeProgress % 0.25) < 0.02) {
+        console.log('Transition in progress', Math.round(fadeProgress * 100))
+      }
+      if (fadeProgress < 1) {
+        requestAnimationFrame(fade)
+        return
+      }
+      transitionMask.classList.remove('transition-mask--active')
+      renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
+      feedState = 'IDLE_VIEWING'
+      if (DEBUG_FEED) console.log('State', feedState)
+      isTransitioning = false
+      orbitController?.setEnabled(true)
+    }
+    requestAnimationFrame(fade)
   }
   requestAnimationFrame(tick)
 }
 
 const setupSplatNavigation = () => {
   let touchStartY = 0
+  let touchStartTime = 0
   viewerRoot.addEventListener(
     'wheel',
     (event) => {
+      if (feedState !== 'IDLE_VIEWING') return
       if (Math.abs(event.deltaY) < 30) return
       void navigateSplat(event.deltaY > 0 ? 'next' : 'prev', event.deltaY)
     },
@@ -375,8 +421,10 @@ const setupSplatNavigation = () => {
   viewerRoot.addEventListener(
     'touchstart',
     (event) => {
+      if (feedState !== 'IDLE_VIEWING') return
       if (event.touches.length === 1) {
         touchStartY = event.touches[0].clientY
+        touchStartTime = performance.now()
       }
     },
     { passive: true }
@@ -384,9 +432,14 @@ const setupSplatNavigation = () => {
   viewerRoot.addEventListener(
     'touchend',
     (event) => {
+      if (feedState !== 'IDLE_VIEWING') return
       if (event.changedTouches.length !== 1) return
       const delta = touchStartY - event.changedTouches[0].clientY
       if (Math.abs(delta) < 50) return
+      const dt = Math.max(1, performance.now() - touchStartTime)
+      const velocity = Math.abs(delta) / dt
+      if (DEBUG_FEED) console.log('Swipe velocity', velocity.toFixed(3))
+      if (velocity < 0.25) return
       void navigateSplat(delta > 0 ? 'next' : 'prev', delta)
     },
     { passive: true }
@@ -397,6 +450,7 @@ const start = async () => {
   console.log('Device', isMobile ? 'mobile' : 'desktop')
   console.log('Renderer pixel ratio', viewer.renderer?.getPixelRatio())
   console.log('View-dependent loading enabled', ENABLE_VIEW_DEPENDENT_LOADING)
+  if (DEBUG_FEED) console.log('Feed state', feedState)
   splatEntries = await loadManifest()
   await loadSplat(0)
   currentPoses = splatEntries[0]?.cameraPoses
