@@ -301,7 +301,6 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
 
   loadState = 'LOADING'
   const loadId = ++activeLoadId
-  const oldIndex = currentIndex
 
   console.log('[LOAD] starting index', index, 'entry:', entry.id, 'loadId:', loadId)
 
@@ -454,7 +453,6 @@ const setupOrbitStabilization = () => {
   if (!controls) return
 
   let activePointerId: number | null = null
-  let isDragging = false
 
   const stopDrag = (pointerId: number | null) => {
     if (pointerId === null) return
@@ -469,7 +467,6 @@ const setupOrbitStabilization = () => {
     }
 
     activePointerId = null
-    isDragging = false
   }
 
   const handlePointerDown = (event: PointerEvent) => {
@@ -489,14 +486,12 @@ const setupOrbitStabilization = () => {
     }
 
     activePointerId = event.pointerId
-    isDragging = true
 
     try {
       viewerRoot.setPointerCapture(event.pointerId)
     } catch (error) {
       console.warn('setPointerCapture failed', event.pointerId, error)
       activePointerId = null
-      isDragging = false
     }
   }
 
@@ -522,7 +517,7 @@ const setupOrbitStabilization = () => {
     }
   }
 
-  const handleMouseUp = (event: MouseEvent) => {
+  const handleMouseUp = (_event: MouseEvent) => {
     if (activePointerId !== null) {
       stopDrag(activePointerId)
     }
