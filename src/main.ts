@@ -211,6 +211,12 @@ const updateSplatLayerSize = () => {
   particleOverlay.resize()
 }
 
+const nextFrame = () => new Promise<void>(requestAnimationFrame)
+const nextTwoFrames = async () => {
+  await nextFrame()
+  await nextFrame()
+}
+
 const toVector3 = (value: unknown) => {
   if (!value) return null
   if (value instanceof THREE.Vector3) return value.clone()
@@ -361,18 +367,26 @@ const frameCameraToSplat = () => {
   if (!camera) return
   const bounds = getSplatBounds()
   const center = bounds?.center ?? new THREE.Vector3(0, 0, 0)
-  const radius =
-    bounds && Number.isFinite(bounds.radius) && bounds.radius > 0 ? bounds.radius : 5
+  const rawRadius = bounds?.radius ?? NaN
+  const hasValidRadius = Number.isFinite(rawRadius) && rawRadius > 0
+  const useFallbackRadius = !hasValidRadius || rawRadius < 1.5
+  const radius = useFallbackRadius ? 6 : rawRadius
   const controls = viewer?.controls as { target: THREE.Vector3 } | undefined
   const target = controls?.target ?? new THREE.Vector3()
-  const direction = camera.position.clone().sub(target)
-  if (direction.lengthSq() < 0.0001) {
-    direction.set(0, 0, 1)
+  let position: THREE.Vector3
+  if (useFallbackRadius) {
+    position = center.clone().add(new THREE.Vector3(0, 0, 6))
+    console.log('Frame fallback radius used', radius)
   } else {
-    direction.normalize()
+    const direction = camera.position.clone().sub(target)
+    if (direction.lengthSq() < 0.0001) {
+      direction.set(0, 0, 1)
+    } else {
+      direction.normalize()
+    }
+    const distance = Math.max(radius * 2.2, 0.1)
+    position = center.clone().addScaledVector(direction, distance)
   }
-  const distance = Math.max(radius * 2.2, 0.1)
-  const position = center.clone().addScaledVector(direction, distance)
   applyCameraPose(position, center)
   currentSplatCenter = center.clone()
   updateDebugMarker(center)
@@ -418,6 +432,13 @@ const loadSplat = async (entry: ManifestSplat) => {
   await logSplatHead(entry.file)
 
   await viewer.removeSplatScene(0, false)
+  let progress = 0
+  let reached100 = false
+  let t100 = 0
+  let resolveProgress100: (() => void) | null = null
+  const progress100Promise = new Promise<void>((resolve) => {
+    resolveProgress100 = resolve
+  })
   let lastProgressLogged = -1
   await viewer.addSplatScene(entry.file, {
     showLoadingUI: true,
@@ -425,18 +446,34 @@ const loadSplat = async (entry: ManifestSplat) => {
     splatAlphaRemovalThreshold: 5,
     rotation: [1, 0, 0, 0],
     onProgress: (percent: number) => {
+      progress = percent
       const rounded = Math.round(percent)
       if (statusEl) statusEl.textContent = `Loading ${rounded}%`
       if (rounded >= lastProgressLogged + 5 || rounded === 100) {
         lastProgressLogged = rounded
         console.log('LOAD progress', entry.file, `${rounded}%`)
       }
+      if (!reached100 && percent >= 100) {
+        reached100 = true
+        t100 = performance.now()
+        resolveProgress100?.()
+        console.log('LOAD progress 100%', entry.file)
+      }
     },
   })
   const loadMs = Math.round(performance.now() - loadStart)
-  console.log('LOAD done', entry.file, `${loadMs}ms`)
+  console.log('LOAD request issued', entry.file, `${loadMs}ms`)
+  if (!reached100 && progress >= 100) {
+    reached100 = true
+    t100 = performance.now()
+    resolveProgress100?.()
+    console.log('LOAD progress 100%', entry.file)
+  }
+  await progress100Promise
+  await nextTwoFrames()
+  const settleMs = t100 ? Math.round(performance.now() - t100) : 0
+  console.log('SPLAT READY', entry.file, `+${settleMs}ms`)
   frameCameraToSplat()
-  console.log('SPLAT ready', entry.file)
 
   setOverlay(entry)
   setAnnotations(entry)
