@@ -1,9 +1,6 @@
 import './style.css'
 import * as THREE from 'three'
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
-import { AnnotationManager, type Annotation } from './annotations/AnnotationManager'
-import { createOverlay } from './ui/overlay'
-import { ParticleDisintegration } from './transitions/ParticleDisintegration'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) {
@@ -14,31 +11,11 @@ const viewerRoot = document.createElement('div')
 viewerRoot.id = 'viewer'
 app.appendChild(viewerRoot)
 
-const poster = document.createElement('div')
-poster.className = 'poster'
-poster.innerHTML = `
-  <div class="poster__content">
-    <p class="poster__label">Loading splat</p>
-    <p class="poster__status">2D preview ready</p>
-  </div>
-`
-app.appendChild(poster)
-
-const annotationsRoot = document.createElement('div')
-annotationsRoot.className = 'annotations'
-app.appendChild(annotationsRoot)
-
-const overlay = createOverlay()
-app.appendChild(overlay)
-
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
 
-const threeScene = new THREE.Scene()
-
 const viewer = new GaussianSplats3D.Viewer({
   rootElement: viewerRoot,
-  threeScene,
   cameraUp: [0, 1, 0],
   initialCameraPosition: [0, 0, 6],
   initialCameraLookAt: [0, 0, 0],
@@ -70,11 +47,8 @@ if (viewer.renderer) {
 }
 
 let currentSplatMesh:
-  | { material?: { depthWrite: boolean }; getSplatCount: () => number; getSplatCenter: (index: number, out: THREE.Vector3) => void }
+  | { material?: { depthWrite: boolean }; getSplatCount: () => number }
   | null = null
-
-const particleSystem = new ParticleDisintegration(threeScene)
-const annotationManager = new AnnotationManager(annotationsRoot)
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   console.log('Splat mesh ready')
@@ -87,7 +61,9 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
     console.log('Splat count', viewerAny.splatMesh.getSplatCount())
   }
   console.log('3D splat mesh ready')
-  startRevealTransition()
+  console.log('Splat mesh parent', (splatMesh as unknown as { parent?: unknown }).parent)
+  const rendererInfo = viewer.renderer?.info
+  console.log('Renderer programs', rendererInfo?.programs?.length)
 })
 
 type SplatEntry = {
@@ -101,7 +77,6 @@ let splatEntries: SplatEntry[] = []
 let currentIndex = 0
 let hasScene = false
 let isLoading = false
-let isTransitioning = false
 
 const logSplatHead = async (url: string) => {
   try {
@@ -144,7 +119,6 @@ const loadSplat = async (index: number) => {
   const entry = splatEntries[index]
   if (!entry) return
   isLoading = true
-  showPoster('2D preview ready')
 
   const url = `/splats/${entry.file}`
   await logSplatHead(url)
@@ -172,7 +146,6 @@ const loadSplat = async (index: number) => {
   currentIndex = index
   hasScene = true
   isLoading = false
-  setAnnotationsForEntry(entry.id)
 
   const nextIndex = (currentIndex + 1) % splatEntries.length
   if (splatEntries[nextIndex]) {
@@ -234,114 +207,8 @@ const setupPointerDebug = () => {
   })
 }
 
-const showPoster = (status: string) => {
-  const statusEl = poster.querySelector<HTMLParagraphElement>('.poster__status')
-  if (statusEl) statusEl.textContent = status
-  poster.classList.remove('poster--hidden')
-  console.log('2D render loaded')
-}
-
-const startRevealTransition = () => {
-  const duration = 700
-  const start = performance.now()
-  const tick = (time: number) => {
-    const progress = Math.min(1, (time - start) / duration)
-    poster.style.opacity = String(1 - progress)
-    console.log('Reveal progress', Math.round(progress * 100))
-    if (progress < 1) {
-      requestAnimationFrame(tick)
-    } else {
-      poster.classList.add('poster--hidden')
-      poster.style.opacity = ''
-    }
-  }
-  requestAnimationFrame(tick)
-}
-
-const setAnnotationsForEntry = (id: string) => {
-  const annotationSets: Record<string, Annotation[]> = {
-    gs_Isetta_Car: [
-      {
-        id: 'door',
-        label: 'Doorline',
-        body: 'Compact cabin design.',
-        position: new THREE.Vector3(0.25, 0.4, 0.3),
-      },
-      {
-        id: 'wheel',
-        label: 'Wheelbase',
-        body: 'Classic microcar stance.',
-        position: new THREE.Vector3(-0.4, -0.2, 0.6),
-      },
-    ],
-  }
-  annotationManager.setAnnotations(annotationSets[id] ?? [])
-}
-
-const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
-  if (isTransitioning || splatEntries.length < 2) return
-  isTransitioning = true
-  console.log('Scroll delta', delta)
-
-  const targetIndex =
-    direction === 'next'
-      ? (currentIndex + 1) % splatEntries.length
-      : (currentIndex - 1 + splatEntries.length) % splatEntries.length
-
-  console.log('Navigate splat', currentIndex, '->', targetIndex)
-  if (currentSplatMesh) {
-    const particleCount = particleSystem.start(currentSplatMesh, direction === 'next' ? 'down' : 'up')
-    console.log('Particle disintegration start', particleCount)
-  }
-
-  const transitionStart = performance.now()
-  const transitionDuration = 700
-  const renderModeSetter = viewer as unknown as { setRenderMode?: (mode: number) => void }
-  renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.Always)
-
-  const tick = async (time: number) => {
-    particleSystem.update(time)
-    if (time - transitionStart < transitionDuration) {
-      requestAnimationFrame(tick)
-      return
-    }
-    console.log('Particle disintegration end')
-    await loadSplat(targetIndex)
-    renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
-    isTransitioning = false
-  }
-  requestAnimationFrame(tick)
-}
-
 const setupSplatNavigation = () => {
-  let touchStartY = 0
-  viewerRoot.addEventListener(
-    'wheel',
-    (event) => {
-      if (Math.abs(event.deltaY) < 30) return
-      void navigateSplat(event.deltaY > 0 ? 'next' : 'prev', event.deltaY)
-    },
-    { passive: true }
-  )
-  viewerRoot.addEventListener(
-    'touchstart',
-    (event) => {
-      if (event.touches.length === 1) {
-        touchStartY = event.touches[0].clientY
-      }
-    },
-    { passive: true }
-  )
-  viewerRoot.addEventListener(
-    'touchend',
-    (event) => {
-      if (event.changedTouches.length !== 1) return
-      const delta = touchStartY - event.changedTouches[0].clientY
-      if (Math.abs(delta) < 50) return
-      void navigateSplat(delta > 0 ? 'next' : 'prev', delta)
-    },
-    { passive: true }
-  )
+  console.log('Splat navigation disabled for debug')
 }
 
 const start = async () => {
@@ -356,15 +223,12 @@ const start = async () => {
   const camera = viewer.camera
   if (camera) {
     console.log('Camera position', camera.position.toArray())
-  }
-  const animate = (time: number) => {
-    if (viewer.camera) {
-      annotationManager.update(viewer.camera)
+    const target = (viewer.controls as unknown as { target?: THREE.Vector3 })?.target
+    if (target) {
+      camera.lookAt(target)
+      console.log('Camera target', target.toArray())
     }
-    particleSystem.update(time)
-    requestAnimationFrame(animate)
   }
-  requestAnimationFrame(animate)
 }
 
 start().catch((error: unknown) => {
