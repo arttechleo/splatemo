@@ -74,47 +74,16 @@ const manifestUrl = '/splats/manifest.json'
 
 const threeScene = new THREE.Scene()
 
-const viewer = new GaussianSplats3D.Viewer({
-  rootElement: viewerRoot,
-  threeScene,
-  cameraUp: [0, 1, 0],
-  initialCameraPosition: [0, 0, 6],
-  initialCameraLookAt: [0, 0, 0],
-  sharedMemoryForWorkers: false,
-  gpuAcceleratedSort: false,
-  useBuiltInControls: true,
-  renderMode: GaussianSplats3D.RenderMode.OnChange,
-  sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
-  sphericalHarmonicsDegree: isMobile ? 0 : 1,
-  splatSortDistanceMapPrecision: isMobile ? 12 : 16,
-  halfPrecisionCovariancesOnGPU: isMobile,
-  antialiased: false,
-  kernel2DSize: isMobile ? 0.18 : 0.24,
-  webXRMode: GaussianSplats3D.WebXRMode.None,
-  logLevel: GaussianSplats3D.LogLevel.None,
-})
-
-if (viewer.renderer) {
-  viewer.renderer.setClearColor(0x000000, 1)
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75)
-  viewer.renderer.setPixelRatio(pixelRatio)
-  viewer.renderer.domElement.addEventListener('webglcontextlost', (event: Event) => {
-    event.preventDefault()
-    console.error('WebGL context lost')
-  })
-  const canvas = viewer.renderer.domElement
-  const styles = window.getComputedStyle(canvas)
-  console.log('Splat canvas', canvas)
-  console.log('Splat canvas styles', {
-    display: styles.display,
-    visibility: styles.visibility,
-    opacity: styles.opacity,
-    zIndex: styles.zIndex,
-  })
-}
+let viewer: any
 
 const annotationManager = new AnnotationManager(annotationsRoot)
 const particleOverlay = createParticleOverlay(particleCanvas)
+
+const sizeWarning = document.createElement('div')
+sizeWarning.className = 'size-warning'
+sizeWarning.textContent = 'SPLAT LAYER SIZE 0 — CHECK CSS'
+sizeWarning.style.display = 'none'
+uiLayer.appendChild(sizeWarning)
 
 let manifest: Manifest | null = null
 let currentIndex = 0
@@ -211,6 +180,25 @@ const setQualityForMotion = (active: boolean) => {
   if (!viewer.renderer) return
   const cap = active ? 1.25 : 1.75
   viewer.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap))
+}
+
+const updateSplatLayerSize = () => {
+  const rect = splatLayer.getBoundingClientRect()
+  if (rect.width < 100 || rect.height < 100) {
+    console.warn('Splat layer size too small', rect.width, rect.height)
+    sizeWarning.style.display = 'block'
+  } else {
+    sizeWarning.style.display = 'none'
+  }
+  const canvasCount = splatLayer.querySelectorAll('canvas').length
+  console.log('Splat layer size', Math.round(rect.width), Math.round(rect.height), 'canvases', canvasCount)
+  if (viewer?.renderer && viewer?.camera) {
+    viewer.renderer.setSize(rect.width, rect.height, false)
+    const camera = viewer.camera as THREE.PerspectiveCamera
+    camera.aspect = rect.width / rect.height
+    camera.updateProjectionMatrix()
+  }
+  particleOverlay.resize()
 }
 
 const loadSplat = async (entry: ManifestSplat) => {
@@ -389,6 +377,55 @@ const setupNavigation = (feed: ReturnType<typeof createFeedController>) => {
 }
 
 const start = async () => {
+  splatLayer.innerHTML = ''
+  splatLayer.appendChild(viewerRoot)
+  await new Promise(requestAnimationFrame)
+  await new Promise(requestAnimationFrame)
+
+  viewer = new GaussianSplats3D.Viewer({
+    rootElement: viewerRoot,
+    threeScene,
+    cameraUp: [0, 1, 0],
+    initialCameraPosition: [0, 0, 6],
+    initialCameraLookAt: [0, 0, 0],
+    sharedMemoryForWorkers: false,
+    gpuAcceleratedSort: false,
+    useBuiltInControls: true,
+    renderMode: GaussianSplats3D.RenderMode.OnChange,
+    sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+    sphericalHarmonicsDegree: isMobile ? 0 : 1,
+    splatSortDistanceMapPrecision: isMobile ? 12 : 16,
+    halfPrecisionCovariancesOnGPU: isMobile,
+    antialiased: false,
+    kernel2DSize: isMobile ? 0.18 : 0.24,
+    webXRMode: GaussianSplats3D.WebXRMode.None,
+    logLevel: GaussianSplats3D.LogLevel.None,
+  })
+
+  if (viewer.renderer) {
+    viewer.renderer.setClearColor(0x000000, 1)
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75)
+    viewer.renderer.setPixelRatio(pixelRatio)
+    viewer.renderer.domElement.addEventListener('webglcontextlost', (event: Event) => {
+      event.preventDefault()
+      console.error('WebGL context lost')
+    })
+    const canvas = viewer.renderer.domElement
+    const styles = window.getComputedStyle(canvas)
+    console.log('Splat canvas', canvas)
+    console.log('Splat canvas styles', {
+      display: styles.display,
+      visibility: styles.visibility,
+      opacity: styles.opacity,
+      zIndex: styles.zIndex,
+    })
+  }
+
+  const resizeObserver = new ResizeObserver(() => updateSplatLayerSize())
+  resizeObserver.observe(splatLayer)
+  window.addEventListener('resize', updateSplatLayerSize)
+  updateSplatLayerSize()
+
   setupOrbitControls()
   setupPointerDebug()
   manifest = await loadManifest()
