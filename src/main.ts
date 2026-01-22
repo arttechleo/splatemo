@@ -33,6 +33,7 @@ app.appendChild(overlay)
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
+const ENABLE_VIEW_DEPENDENT_LOADING = false
 
 const threeScene = new THREE.Scene()
 
@@ -95,6 +96,7 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   const rendererInfo = viewer.renderer?.info
   console.log('Renderer programs', rendererInfo?.programs?.length)
   startRevealTransition()
+  assertSplatVisibility('onSplatMeshChanged')
 })
 
 type SplatEntry = {
@@ -187,6 +189,7 @@ const loadSplat = async (index: number) => {
   isLoading = false
   currentPoses = entry.cameraPoses
   setAnnotationsForEntry(entry.id)
+  assertSplatVisibility('loadSplat')
 
   const nextIndex = (currentIndex + 1) % splatEntries.length
   if (splatEntries[nextIndex]) {
@@ -428,6 +431,7 @@ const setupSplatNavigation = () => {
 const start = async () => {
   console.log('Device', isMobile ? 'mobile' : 'desktop')
   console.log('Renderer pixel ratio', viewer.renderer?.getPixelRatio())
+  console.log('View-dependent loading enabled', ENABLE_VIEW_DEPENDENT_LOADING)
   splatEntries = await loadManifest()
   await loadSplat(0)
   currentPoses = splatEntries[0]?.cameraPoses
@@ -458,3 +462,42 @@ const start = async () => {
 start().catch((error: unknown) => {
   console.error('Failed to load splat scene', error)
 })
+
+const assertSplatVisibility = (stage: string) => {
+  const mesh = currentSplatMesh as unknown as {
+    parent?: unknown
+    visible?: boolean
+    material?: { opacity?: number }
+  } | null
+  if (!mesh) {
+    console.error(`[${stage}] Splat mesh missing. Check addSplatScene() and loader.`)
+    return
+  }
+  if (!mesh.parent) {
+    console.error(`[${stage}] Splat mesh not attached to scene. Ensure viewer uses rootElement/scene correctly.`)
+  }
+  if (mesh.visible === false) {
+    console.error(`[${stage}] Splat mesh visibility is false.`)
+  }
+  if (mesh.material && typeof mesh.material.opacity === 'number' && mesh.material.opacity <= 0) {
+    console.error(`[${stage}] Splat material opacity is zero.`)
+  }
+  const camera = viewer.camera
+  const target = (viewer.controls as unknown as { target?: THREE.Vector3 })?.target
+  if (camera && target) {
+    const toTarget = target.clone().sub(camera.position)
+    if (toTarget.length() < 0.01) {
+      console.error(`[${stage}] Camera target equals camera position.`)
+    } else {
+      const forward = new THREE.Vector3()
+      camera.getWorldDirection(forward)
+      const dot = forward.normalize().dot(toTarget.normalize())
+      if (dot < 0.2) {
+        console.error(`[${stage}] Camera may not be looking at target. Adjust camera/controls.`)
+      }
+    }
+  }
+  if (viewer.renderer && viewer.renderer.getContext().isContextLost()) {
+    console.error(`[${stage}] WebGL context is lost.`)
+  }
+}
