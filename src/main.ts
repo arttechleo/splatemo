@@ -5,6 +5,7 @@ import { AnnotationManager, type Annotation } from './annotations/AnnotationMana
 import { createOverlay } from './ui/overlay'
 import { createFeedController } from './ux/feed'
 import { createParticleOverlay } from './ux/particles'
+import { estimateBoundsFromPLY } from './utils/plyBounds'
 
 type CameraPose = { name: string; position: [number, number, number]; target: [number, number, number] }
 type ManifestSplat = {
@@ -98,6 +99,8 @@ let isDragging = false
 let lastNavTime = 0
 let activePointerId: number | null = null
 let currentSplatCenter = new THREE.Vector3(0, 0, 0)
+let currentSplatRadius = 6
+let currentSplatDistance = 6
 let debugMarker: THREE.Object3D | null = null
 let autoframeTimers: number[] = []
 let engineReadyPromise: Promise<void> = Promise.resolve()
@@ -161,8 +164,14 @@ const animateCameraPose = (pose: CameraPose) => {
   const startPos = camera.position.clone()
   const startTarget = controls.target.clone()
   const center = currentSplatCenter.clone()
-  const endPos = new THREE.Vector3(...pose.position).add(center)
-  const endTarget = new THREE.Vector3(...pose.target).add(center)
+  const dist = currentSplatDistance || currentSplatRadius * 2.2 || 6
+  const posePosition = new THREE.Vector3(...pose.position)
+  const endPos =
+    posePosition.lengthSq() > 0
+      ? posePosition.normalize().multiplyScalar(dist).add(center)
+      : center.clone().add(new THREE.Vector3(0, 0, dist))
+  const poseTarget = new THREE.Vector3(...pose.target)
+  const endTarget = poseTarget.lengthSq() > 0 ? poseTarget.add(center) : center
   const start = performance.now()
   const duration = 650
   const animate = (time: number) => {
@@ -213,105 +222,20 @@ const updateSplatLayerSize = () => {
   particleOverlay.resize()
 }
 
-const nextFrame = () => new Promise<void>(requestAnimationFrame)
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 const nextTwoFrames = async () => {
   await nextFrame()
   await nextFrame()
 }
 
-const toVector3 = (value: unknown) => {
-  if (!value) return null
-  if (value instanceof THREE.Vector3) return value.clone()
-  if (Array.isArray(value) && value.length >= 3) {
-    return new THREE.Vector3(Number(value[0]), Number(value[1]), Number(value[2]))
-  }
-  if (typeof value === 'object' && 'x' in value && 'y' in value && 'z' in value) {
-    const { x, y, z } = value as { x: number; y: number; z: number }
-    return new THREE.Vector3(Number(x), Number(y), Number(z))
-  }
-  return null
-}
-
-const normalizeBounds = (candidate: unknown) => {
-  if (!candidate) return null
-  if (typeof candidate === 'object' && 'center' in candidate && 'radius' in candidate) {
-    const center = toVector3((candidate as { center: unknown }).center)
-    const radius = Number((candidate as { radius: number }).radius)
-    if (center && Number.isFinite(radius)) return { center, radius }
-  }
-  const fromMinMax = (minInput: unknown, maxInput: unknown) => {
-    const min = toVector3(minInput)
-    const max = toVector3(maxInput)
-    if (!min || !max) return null
-    const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
-    const radius = center.distanceTo(max)
-    if (!Number.isFinite(radius)) return null
-    return { center, radius }
-  }
-  if (typeof candidate === 'object' && 'min' in candidate && 'max' in candidate) {
-    const box = candidate as { min: unknown; max: unknown }
-    return fromMinMax(box.min, box.max)
-  }
-  if (Array.isArray(candidate) && candidate.length >= 2) {
-    return fromMinMax(candidate[0], candidate[1])
-  }
-  return null
-}
-
-const computeBoundsFromMesh = (mesh: unknown) => {
-  if (!mesh || typeof mesh !== 'object') return null
-  if (!('getSplatCount' in mesh) || !('getSplatCenter' in mesh)) return null
-  const splatMesh = mesh as {
-    getSplatCount: () => number
-    getSplatCenter: (index: number, out: THREE.Vector3) => void
-  }
-  const total = splatMesh.getSplatCount()
-  if (!total || !Number.isFinite(total)) return null
-  const sampleCount = Math.min(2000, total)
-  const stride = Math.max(1, Math.floor(total / sampleCount))
-  const min = new THREE.Vector3(Infinity, Infinity, Infinity)
-  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity)
-  const temp = new THREE.Vector3()
-  for (let i = 0; i < sampleCount; i += 1) {
-    const splatIndex = i * stride
-    splatMesh.getSplatCenter(splatIndex, temp)
-    min.min(temp)
-    max.max(temp)
-  }
-  if (!Number.isFinite(min.x) || !Number.isFinite(max.x)) return null
-  const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
-  const radius = center.distanceTo(max)
-  if (!Number.isFinite(radius) || radius <= 0) return null
-  return { center, radius }
-}
-
-const getSplatBounds = () => {
-  const scene = viewer?.getSplatScene?.(0) ?? viewer?.splatScene ?? null
-  const candidates = [
-    scene?.getSceneBounds?.(),
-    scene?.getSceneBoundingSphere?.(),
-    scene?.getBoundingSphere?.(),
-    (scene as { bounds?: unknown } | null)?.bounds,
-    viewer?.getSceneBounds?.(),
-    viewer?.getSceneBoundingSphere?.(),
-    (viewer as { bounds?: unknown } | null)?.bounds,
-  ]
-  for (const candidate of candidates) {
-    const normalized = normalizeBounds(candidate)
-    if (normalized) return normalized
-  }
-  const mesh = (scene as { splatMesh?: unknown } | null)?.splatMesh ?? viewer?.splatMesh ?? viewer?.getSplatMesh?.(0)
-  const meshBounds = computeBoundsFromMesh(mesh)
-  if (meshBounds) return meshBounds
-  return null
-}
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 const clearAutoframeRetries = () => {
   autoframeTimers.forEach((timer) => window.clearTimeout(timer))
   autoframeTimers = []
 }
 
-const updateDebugMarker = (center: THREE.Vector3) => {
+const updateDebugMarker = (center: THREE.Vector3, radius: number = 1) => {
   if (!debugMode) {
     if (debugMarker) {
       threeScene.remove(debugMarker)
@@ -327,8 +251,13 @@ const updateDebugMarker = (center: THREE.Vector3) => {
     return
   }
   if (!debugMarker) {
-    debugMarker = new THREE.AxesHelper(0.45)
+    const markerSize = Math.max(0.1, Math.min(radius * 0.15, 2.0))
+    debugMarker = new THREE.AxesHelper(markerSize)
     threeScene.add(debugMarker)
+  } else {
+    const markerSize = Math.max(0.1, Math.min(radius * 0.15, 2.0))
+    const marker = debugMarker as THREE.AxesHelper
+    marker.scale.setScalar(markerSize / 0.45)
   }
   debugMarker.position.copy(center)
 }
@@ -364,38 +293,21 @@ const scheduleAutoframeRetries = (center: THREE.Vector3) => {
   })
 }
 
-const frameCameraToSplat = () => {
+const frameCameraToBounds = (center: THREE.Vector3, radius: number) => {
   const camera = viewer?.camera as THREE.PerspectiveCamera | undefined
   if (!camera) return
-  const bounds = getSplatBounds()
-  const center = bounds?.center ?? new THREE.Vector3(0, 0, 0)
-  const rawRadius = bounds?.radius ?? NaN
-  const hasValidRadius = Number.isFinite(rawRadius) && rawRadius > 0
-  const useFallbackRadius = !hasValidRadius || rawRadius < 1.5
-  const radius = useFallbackRadius ? 6 : rawRadius
-  const controls = viewer?.controls as { target: THREE.Vector3 } | undefined
-  const target = controls?.target ?? new THREE.Vector3()
-  let position: THREE.Vector3
-  if (useFallbackRadius) {
-    position = center.clone().add(new THREE.Vector3(0, 0, 6))
-    console.log('Frame fallback radius used', radius)
-  } else {
-    const direction = camera.position.clone().sub(target)
-    if (direction.lengthSq() < 0.0001) {
-      direction.set(0, 0, 1)
-    } else {
-      direction.normalize()
-    }
-    const distance = Math.max(radius * 2.2, 0.1)
-    position = center.clone().addScaledVector(direction, distance)
-  }
+  const distance = clamp(radius * 2.2, 3.5, 18)
+  const position = center.clone().add(new THREE.Vector3(0, 0, distance))
   applyCameraPose(position, center)
   currentSplatCenter = center.clone()
-  updateDebugMarker(center)
+  currentSplatRadius = radius
+  currentSplatDistance = distance
+  updateDebugMarker(center, radius)
   scheduleAutoframeRetries(center)
   console.log('Frame camera', {
     center: center.toArray(),
     radius: Math.round(radius * 100) / 100,
+    distance: Math.round(distance * 100) / 100,
   })
 }
 
@@ -441,8 +353,8 @@ const loadSplat = async (entry: ManifestSplat) => {
   let reached100 = false
   let t100 = 0
   let resolveProgress100: (() => void) | null = null
-  const progress100Promise = new Promise<void>((resolve) => {
-    resolveProgress100 = resolve
+  const progress100Promise: Promise<void> = new Promise<void>((resolve) => {
+    resolveProgress100 = () => resolve()
   })
   let lastProgressLogged = -1
   await viewer.addSplatScene(entry.file, {
@@ -468,17 +380,43 @@ const loadSplat = async (entry: ManifestSplat) => {
   })
   const loadMs = Math.round(performance.now() - loadStart)
   console.log('LOAD request issued', entry.file, `${loadMs}ms`)
+  // Fallback: if progress already reached 100% before onProgress fired
   if (!reached100 && progress >= 100) {
     reached100 = true
     t100 = performance.now()
-    resolveProgress100?.()
+    if (resolveProgress100 !== null) {
+      (resolveProgress100 as () => void)()
+    }
     console.log('LOAD progress 100%', entry.file)
   }
   await progress100Promise
   await nextTwoFrames()
   const settleMs = t100 ? Math.round(performance.now() - t100) : 0
   console.log('SPLAT READY', entry.file, `+${settleMs}ms`)
-  frameCameraToSplat()
+  const plyBounds = await estimateBoundsFromPLY(entry.file, { debug: debugMode })
+  let center = new THREE.Vector3(0, 0, 0)
+  let radius = 6
+  if (plyBounds) {
+    const [cx, cy, cz] = plyBounds.center
+    if (Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz)) {
+      center = new THREE.Vector3(cx, cy, cz)
+    }
+    if (Number.isFinite(plyBounds.radius) && plyBounds.radius > 0) {
+      radius = plyBounds.radius
+    }
+  }
+  if (!Number.isFinite(radius) || radius < 1.5) {
+    console.warn('PLY bounds invalid, using fallback radius', {
+      radius,
+      center: center.toArray(),
+    })
+    radius = 6
+  }
+  if (!Number.isFinite(center.x) || !Number.isFinite(center.y) || !Number.isFinite(center.z)) {
+    console.warn('PLY bounds invalid, using fallback center', center.toArray())
+    center = new THREE.Vector3(0, 0, 0)
+  }
+  frameCameraToBounds(center, radius)
   resolveEngineReady?.()
   resolveEngineReady = null
 
