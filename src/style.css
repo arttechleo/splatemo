@@ -223,3 +223,10 @@ canvas {
 .transition-mask--active {
   pointer-events: none;
 }
+
+.particle-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}

@@ -1,0 +1,260 @@
+import * as THREE from 'three'
+import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
+
+export type EngineState = 'BOOT' | 'LOADING' | 'READY' | 'ERROR'
+export type CameraPose = {
+  position: [number, number, number]
+  target: [number, number, number]
+}
+export type QualityProfile = 'HIGH' | 'MED' | 'LOW' | 'MOTION'
+
+type ManifestEntry = {
+  id: string
+  name?: string
+  file: string
+  cameraPoses?: CameraPose[]
+}
+
+type Callback<T> = (value: T) => void
+
+const QUALITY: Record<QualityProfile, { pixelRatio: number; kernel2DSize: number; shDegree: number }> =
+  {
+    HIGH: { pixelRatio: 1.5, kernel2DSize: 0.24, shDegree: 1 },
+    MED: { pixelRatio: 1.25, kernel2DSize: 0.2, shDegree: 1 },
+    LOW: { pixelRatio: 1, kernel2DSize: 0.18, shDegree: 0 },
+    MOTION: { pixelRatio: 1, kernel2DSize: 0.16, shDegree: 0 },
+  }
+
+export class SplatEngine {
+  state: EngineState = 'BOOT'
+  private viewer: any | null = null
+  private scene: THREE.Scene | null = null
+  private manifest: ManifestEntry[] = []
+  private currentEntryId: string | null = null
+  private target = new THREE.Vector3(0, 0, 0)
+  private splatMesh:
+    | { parent?: unknown; visible?: boolean; material?: { opacity?: number; depthWrite?: boolean } }
+    | null = null
+  private onProgressCbs: Callback<number>[] = []
+  private onReadyCbs: Array<() => void> = []
+  private onErrorCbs: Callback<unknown>[] = []
+  private lastInvariantLog = 0
+  private defaultPose: CameraPose = { position: [0, 0, 6], target: [0, 0, 0] }
+
+  async mount(container: HTMLElement): Promise<void> {
+    if (this.state !== 'BOOT') return
+    this.scene = new THREE.Scene()
+    this.viewer = new GaussianSplats3D.Viewer({
+      rootElement: container,
+      threeScene: this.scene,
+      selfDrivenMode: false,
+      cameraUp: [0, 1, 0],
+      initialCameraPosition: this.defaultPose.position,
+      initialCameraLookAt: this.defaultPose.target,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: false,
+      useBuiltInControls: false,
+      renderMode: GaussianSplats3D.RenderMode.OnChange,
+      sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+      sphericalHarmonicsDegree: 1,
+      splatSortDistanceMapPrecision: 16,
+      halfPrecisionCovariancesOnGPU: false,
+      antialiased: false,
+      kernel2DSize: 0.24,
+      webXRMode: GaussianSplats3D.WebXRMode.None,
+      logLevel: GaussianSplats3D.LogLevel.None,
+    })
+
+    if (this.viewer.renderer) {
+      this.viewer.renderer.setClearColor(0x000000, 1)
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5)
+      this.viewer.renderer.setPixelRatio(pixelRatio)
+      this.viewer.renderer.domElement.addEventListener('webglcontextlost', (event: Event) => {
+        event.preventDefault()
+        this.emitError(new Error('WebGL context lost'))
+      })
+    }
+
+    this.viewer.onSplatMeshChanged((mesh: typeof this.splatMesh) => {
+      this.splatMesh = mesh
+      if (mesh?.material) {
+        mesh.material.depthWrite = false
+      }
+      this.onReadyCbs.forEach((cb) => cb())
+    })
+
+    await this.loadManifest()
+  }
+
+  dispose(): void {
+    this.viewer?.dispose?.()
+    this.viewer = null
+    this.scene = null
+    this.state = 'BOOT'
+  }
+
+  async loadSplat(entryId: string): Promise<void> {
+    if (!this.viewer) return
+    if (this.state === 'LOADING') return
+    const entry = this.manifest.find((item) => item.id === entryId)
+    if (!entry) {
+      this.emitError(new Error(`Entry not found: ${entryId}`))
+      return
+    }
+    this.state = 'LOADING'
+    await this.unloadCurrent()
+    const url = `/splats/${entry.file}`
+    await this.viewer.addSplatScene(url, {
+      showLoadingUI: true,
+      progressiveLoad: true,
+      splatAlphaRemovalThreshold: 5,
+      rotation: [1, 0, 0, 0],
+      onProgress: (percent: number) => {
+        this.onProgressCbs.forEach((cb) => cb(percent))
+      },
+    })
+    this.currentEntryId = entryId
+    this.state = 'READY'
+    this.assertInvariants('loadSplat')
+  }
+
+  async unloadCurrent(): Promise<void> {
+    if (!this.viewer) return
+    if (this.currentEntryId) {
+      await this.viewer.removeSplatScene(0, false)
+      this.currentEntryId = null
+    }
+  }
+
+  setCameraPose(pose: CameraPose): void {
+    const camera = this.getCamera()
+    if (!camera) return
+    camera.position.set(...pose.position)
+    this.setTarget(pose.target)
+    camera.lookAt(this.target)
+  }
+
+  setTarget(target: [number, number, number]): void {
+    this.target.set(...target)
+    const camera = this.getCamera()
+    if (camera) camera.lookAt(this.target)
+  }
+
+  setYawOnly(_: boolean): void {}
+
+  setQuality(profile: QualityProfile): void {
+    if (!this.viewer) return
+    const quality = QUALITY[profile]
+    if (this.viewer.renderer) {
+      this.viewer.renderer.setPixelRatio(Math.min(quality.pixelRatio, window.devicePixelRatio || 1))
+    }
+    const mesh = this.viewer.splatMesh as { kernel2DSize?: number } | undefined
+    if (mesh && typeof mesh.kernel2DSize === 'number') {
+      mesh.kernel2DSize = quality.kernel2DSize
+    }
+    const setSH = (this.viewer as unknown as { setActiveSphericalHarmonicsDegrees?: (value: number) => void })
+      .setActiveSphericalHarmonicsDegrees
+    setSH?.(quality.shDegree)
+  }
+
+  getCamera(): THREE.PerspectiveCamera | null {
+    return (this.viewer?.camera as THREE.PerspectiveCamera) ?? null
+  }
+
+  getRendererDomElement(): HTMLCanvasElement | null {
+    return (this.viewer?.renderer?.domElement as HTMLCanvasElement) ?? null
+  }
+
+  getTarget(): THREE.Vector3 {
+    return this.target.clone()
+  }
+
+  getManifestEntries(): ManifestEntry[] {
+    return this.manifest
+  }
+
+  getEntryById(id: string): ManifestEntry | undefined {
+    return this.manifest.find((entry) => entry.id === id)
+  }
+
+  onProgress(cb: Callback<number>): void {
+    this.onProgressCbs.push(cb)
+  }
+
+  onReady(cb: () => void): void {
+    this.onReadyCbs.push(cb)
+  }
+
+  onError(cb: Callback<unknown>): void {
+    this.onErrorCbs.push(cb)
+  }
+
+  tick(_dt: number): void {
+    if (!this.viewer) return
+    const update = (this.viewer as unknown as { update?: () => void }).update
+    const render = (this.viewer as unknown as { render?: () => void }).render
+    update?.()
+    render?.()
+    if (this.state === 'READY') {
+      this.assertInvariants('tick')
+    }
+  }
+
+  private async loadManifest(): Promise<void> {
+    const response = await fetch('/splats/manifest.json', { cache: 'no-store' })
+    if (!response.ok) {
+      this.emitError(new Error(`Manifest fetch failed: ${response.status}`))
+      this.state = 'ERROR'
+      return
+    }
+    this.manifest = (await response.json()) as ManifestEntry[]
+  }
+
+  private assertInvariants(stage: string): void {
+    const now = performance.now()
+    if (now - this.lastInvariantLog < 500) return
+    this.lastInvariantLog = now
+    const mesh = this.splatMesh
+    if (!mesh) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: splat object missing.`)
+      this.tryRecovery()
+      return
+    }
+    if (!mesh.parent) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: splat not attached to scene.`)
+      this.tryRecovery()
+    }
+    if (mesh.visible === false) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: splat visibility false.`)
+      mesh.visible = true
+    }
+    if (mesh.material && typeof mesh.material.opacity === 'number' && mesh.material.opacity <= 0) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: splat opacity zero.`)
+      mesh.material.opacity = 1
+    }
+    const camera = this.getCamera()
+    if (camera) {
+      const toTarget = this.target.clone().sub(camera.position)
+      if (toTarget.length() < 0.01) {
+        console.error(`RENDER INVARIANT FAILED [${stage}]: camera at target.`)
+        this.setCameraPose(this.defaultPose)
+      }
+    }
+    if (this.viewer?.renderer?.getContext().isContextLost()) {
+      console.error(`RENDER INVARIANT FAILED [${stage}]: WebGL context lost.`)
+    }
+  }
+
+  private tryRecovery(): void {
+    if (!this.viewer || !this.scene) return
+    if (this.viewer.splatMesh && !this.viewer.splatMesh.parent) {
+      this.scene.add(this.viewer.splatMesh)
+    }
+    this.setCameraPose(this.defaultPose)
+  }
+
+  private emitError(err: unknown): void {
+    this.state = 'ERROR'
+    this.onErrorCbs.forEach((cb) => cb(err))
+  }
+}
