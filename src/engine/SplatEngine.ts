@@ -45,6 +45,12 @@ export class SplatEngine {
   private onErrorCbs: Callback<unknown>[] = []
   private lastInvariantLog = 0
   private defaultPose: CameraPose = { position: [0, 0, 6], target: [0, 0, 0] }
+  private debug = false
+  private renderProbeLogged = false
+
+  constructor(options?: { debug?: boolean }) {
+    this.debug = options?.debug ?? false
+  }
 
   async mount(container: HTMLElement): Promise<void> {
     if (this.state !== 'BOOT') return
@@ -75,6 +81,13 @@ export class SplatEngine {
       this.viewer.renderer.setClearColor(0x000000, 1)
       const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5)
       this.viewer.renderer.setPixelRatio(pixelRatio)
+      if (this.debug) {
+        const canvas = this.viewer.renderer.domElement
+        const rect = canvas.getBoundingClientRect()
+        console.log('Canvas size', rect.width, rect.height)
+        console.log('Renderer size', canvas.width, canvas.height)
+        console.log('Device pixel ratio', window.devicePixelRatio || 1)
+      }
       this.viewer.renderer.domElement.addEventListener('webglcontextlost', (event: Event) => {
         event.preventDefault()
         this.emitError(new Error('WebGL context lost'))
@@ -88,6 +101,10 @@ export class SplatEngine {
       }
       this.onReadyCbs.forEach((cb) => cb())
     })
+
+    if (this.debug) {
+      this.addSanityMesh()
+    }
 
     await this.loadManifest()
   }
@@ -128,6 +145,7 @@ export class SplatEngine {
       return
     }
     this.attachSplatRenderable()
+    this.frameCamera()
     this.state = 'READY'
     this.assertInvariants('loadSplat')
   }
@@ -146,6 +164,23 @@ export class SplatEngine {
     camera.position.set(...pose.position)
     this.setTarget(pose.target)
     camera.lookAt(this.target)
+  }
+
+  frameCamera(center?: THREE.Vector3, radius = 5): void {
+    const camera = this.getCamera()
+    if (!camera) return
+    const target = center ?? new THREE.Vector3(0, 0, 0)
+    this.setTarget([target.x, target.y, target.z])
+    const distance = Math.max(6, radius * 2.5)
+    camera.position.set(target.x, target.y, target.z + distance)
+    camera.lookAt(target)
+    if (this.debug) {
+      console.log('Frame camera', {
+        center: target.toArray(),
+        radius,
+        position: camera.position.toArray(),
+      })
+    }
   }
 
   setTarget(target: [number, number, number]): void {
@@ -207,8 +242,24 @@ export class SplatEngine {
     if (!this.viewer) return
     const update = (this.viewer as unknown as { update?: () => void }).update
     const render = (this.viewer as unknown as { render?: () => void }).render
-    update?.call(this.viewer)
-    render?.call(this.viewer)
+    if (update && render) {
+      update.call(this.viewer)
+      render.call(this.viewer)
+      if (this.debug && !this.renderProbeLogged) {
+        this.renderProbeLogged = true
+        console.log('Rendering via SPLAT_VIEWER.update/render')
+      }
+    } else if (this.viewer?.renderer && this.viewer?.camera && this.getCanonicalScene()) {
+      this.viewer.renderer.render(this.getCanonicalScene(), this.viewer.camera)
+      if (this.debug && !this.renderProbeLogged) {
+        this.renderProbeLogged = true
+        console.log(
+          'Rendering via THREE.WebGLRenderer',
+          this.getCanonicalScene()?.uuid,
+          (this.viewer.camera as THREE.Camera).uuid
+        )
+      }
+    }
     if (this.state === 'READY') {
       this.assertInvariants('tick')
     }
@@ -306,7 +357,17 @@ export class SplatEngine {
       if (mesh.material && typeof mesh.material.opacity === 'number' && mesh.material.opacity <= 0) {
         mesh.material.opacity = 1
       }
+      object.layers.enableAll()
+      const camera = this.getCamera()
+      camera?.layers.enableAll()
       console.log('Attached splat renderable to canonical scene.')
+      if (this.debug) {
+        console.log('Renderable', object.type, object.uuid)
+        this.logParentChain(object)
+        console.log('Renderable visible', mesh.visible, 'position', object.position.toArray())
+        console.log('Renderable scale', object.scale.toArray())
+        console.log('Renderable layers', object.layers.mask, 'camera layers', camera?.layers.mask)
+      }
     }
   }
 
@@ -341,6 +402,30 @@ export class SplatEngine {
       console.error('Diagnostics: camera position', camera.position.toArray())
       console.error('Diagnostics: camera target', this.target.toArray())
     }
+  }
+
+  private logParentChain(obj: THREE.Object3D): void {
+    const chain: string[] = []
+    let current: THREE.Object3D | null = obj
+    while (current) {
+      chain.push(`${current.type}:${current.uuid}`)
+      current = current.parent
+    }
+    console.log('Renderable chain', chain.join(' -> '))
+  }
+
+  private addSanityMesh(): void {
+    if (!this.scene) return
+    const geometry = new THREE.BoxGeometry(1, 1, 1)
+    const material = new THREE.MeshStandardMaterial({ color: 0x44aaff })
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.position.set(0, 0, 0)
+    this.scene.add(mesh)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6)
+    const directional = new THREE.DirectionalLight(0xffffff, 0.8)
+    directional.position.set(2, 4, 3)
+    this.scene.add(ambient, directional)
+    console.log('Sanity mesh added')
   }
 
   private emitError(err: unknown): void {

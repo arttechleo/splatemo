@@ -5,8 +5,12 @@ import { createTransitions } from './ux/transitions'
 import { createAnnotations } from './ux/annotations'
 import { createOverlay } from './ui/overlay'
 
-const ENABLE_PARTICLE_TRANSITIONS = true
-const ENABLE_2D_TO_3D_REVEAL = true
+const params = new URLSearchParams(window.location.search)
+const DEBUG_MODE = params.get('debug') === '1'
+const SAFE_MODE = params.get('safe') === '1'
+
+const ENABLE_PARTICLE_TRANSITIONS = !SAFE_MODE
+const ENABLE_2D_TO_3D_REVEAL = !SAFE_MODE
 const ENABLE_VIEW_DEPENDENT_LOADING = false
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -34,19 +38,28 @@ app.appendChild(annotationsRoot)
 
 const overlay = createOverlay()
 app.appendChild(overlay)
+if (SAFE_MODE) {
+  overlay.style.display = 'none'
+}
 
 const hint = document.createElement('div')
 hint.className = 'feed-hint'
 hint.textContent = 'Swipe to next'
 app.appendChild(hint)
+if (SAFE_MODE) {
+  hint.style.display = 'none'
+}
 
-const engine = new SplatEngine()
+const engine = new SplatEngine({ debug: DEBUG_MODE })
 let controls: ReturnType<typeof createControls> | null = null
 const annotations = createAnnotations({ engine, container: annotationsRoot })
+if (SAFE_MODE) {
+  annotationsRoot.style.display = 'none'
+}
 const transitions = createTransitions({
   engine,
   container: viewerRoot,
-  debug: true,
+  debug: DEBUG_MODE,
   onEntryChange: (entryId) => annotations.setForEntry(entryId),
 })
 
@@ -81,7 +94,7 @@ engine.onError((err) => {
 
 const start = async () => {
   await engine.mount(viewerRoot)
-  controls = createControls({ engine, debug: true })
+  controls = createControls({ engine, debug: DEBUG_MODE })
   const entries = engine.getManifestEntries()
   if (!entries.length) {
     throw new Error('No splat entries available.')
@@ -89,7 +102,9 @@ const start = async () => {
   await engine.loadSplat(entries[0].id)
   annotations.setForEntry(entries[0].id)
   transitions.setEntries(entries)
-  transitions.attach(viewerRoot)
+  if (!SAFE_MODE) {
+    transitions.attach(viewerRoot)
+  }
 
   let last = performance.now()
   const tick = (time: number) => {
@@ -101,15 +116,42 @@ const start = async () => {
       if (ENABLE_PARTICLE_TRANSITIONS) {
         transitions.update()
       }
-      annotations.update()
+      if (!SAFE_MODE) {
+        annotations.update()
+      }
     }
     requestAnimationFrame(tick)
   }
   requestAnimationFrame(tick)
 
+  if (DEBUG_MODE) {
+    const canvas = engine.getRendererDomElement()
+    if (canvas) {
+      const styles = window.getComputedStyle(canvas)
+      console.log('Canvas style', {
+        display: styles.display,
+        visibility: styles.visibility,
+        opacity: styles.opacity,
+        zIndex: styles.zIndex,
+      })
+      const center = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+      console.log('Element at center', center)
+    }
+  }
   console.log('View-dependent loading enabled', ENABLE_VIEW_DEPENDENT_LOADING)
 }
 
 start().catch((error: unknown) => {
   console.error('Failed to start app', error)
 })
+
+if (DEBUG_MODE) {
+  window.addEventListener('keydown', (event) => {
+    if (event.key.toLowerCase() !== 'd') return
+    const next = overlay.style.display === 'none' ? '' : 'none'
+    overlay.style.display = next
+    annotationsRoot.style.display = next
+    hint.style.display = next
+    console.log('UI overlay toggle', next === '' ? 'shown' : 'hidden')
+  })
+}
