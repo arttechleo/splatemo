@@ -17,9 +17,14 @@ const entries = fs
   .filter((file) => file.toLowerCase().endsWith('.ply'))
   .map((file) => ({
     id: path.basename(file, path.extname(file)),
-    name: toTitle(file),
-    file,
+    file: `/splats/${file}`,
+    user: { handle: '@studio', name: 'Studio', avatar: 'S' },
+    caption: toTitle(file),
+    counts: { likes: 0, comments: 0, reposts: 0 },
+    cameraPoses: [{ name: 'Front', position: [0, 0, 6], target: [0, 0, 0] }],
+    annotations: [],
   }))
 
-fs.writeFileSync(manifestPath, `${JSON.stringify(entries, null, 2)}\n`, 'utf-8')
+const manifest = { splats: entries }
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8')
 console.log(`Wrote ${entries.length} entries to public/splats/manifest.json`)

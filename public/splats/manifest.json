@@ -1,23 +1,46 @@
-[
-  {
-    "id": "girlsonbikes",
-    "name": "Girlsonbikes",
-    "file": "girlsonbikes.ply"
-  },
-  {
-    "id": "gs_Isetta_Car",
-    "name": "Gs Isetta Car",
-    "file": "gs_Isetta_Car.ply",
-    "cameraPoses": [
-      {
-        "position": [0, 0, 6],
-        "target": [0, 0, 0]
-      }
-    ]
-  },
-  {
-    "id": "windowsxpWallpaper",
-    "name": "Windowsxp Wallpaper",
-    "file": "windowsxpWallpaper.ply"
-  }
-]
+{
+  "splats": [
+    {
+      "id": "isetta",
+      "file": "/splats/gs_Isetta_Car.ply",
+      "user": { "handle": "@arttechleo", "name": "Leo", "avatar": "L" },
+      "caption": "Isetta car scan",
+      "counts": { "likes": 1200, "comments": 328, "reposts": 89 },
+      "cameraPoses": [
+        { "name": "Front", "position": [0, 0, 6], "target": [0, 0, 0] },
+        { "name": "Right", "position": [6, 0, 0], "target": [0, 0, 0] },
+        { "name": "Left", "position": [-6, 0, 0], "target": [0, 0, 0] }
+      ],
+      "annotations": [
+        { "id": "a1", "position": [0.8, 0.2, 0.1], "title": "Door", "body": "Click to inspect" },
+        { "id": "a2", "position": [-0.5, -0.2, 0.6], "title": "Wheel", "body": "Classic microcar stance" }
+      ]
+    },
+    {
+      "id": "girlsonbikes",
+      "file": "/splats/girlsonbikes.ply",
+      "user": { "handle": "@studio", "name": "Studio", "avatar": "S" },
+      "caption": "Girls on bikes",
+      "counts": { "likes": 542, "comments": 89, "reposts": 12 },
+      "cameraPoses": [
+        { "name": "Front", "position": [0, 0, 6], "target": [0, 0, 0] }
+      ],
+      "annotations": [
+        { "id": "b1", "position": [0.2, 0.3, 0.2], "title": "Pose", "body": "Snapshot moment" }
+      ]
+    },
+    {
+      "id": "windowsxp",
+      "file": "/splats/windowsxpWallpaper.ply",
+      "user": { "handle": "@archive", "name": "Archive", "avatar": "A" },
+      "caption": "Windows XP hills",
+      "counts": { "likes": 980, "comments": 142, "reposts": 31 },
+      "cameraPoses": [
+        { "name": "Front", "position": [0, 0, 6], "target": [0, 0, 0] }
+      ],
+      "annotations": [
+        { "id": "c1", "position": [0.4, 0.1, 0.3], "title": "Horizon", "body": "Open landscape" }
+      ]
+    }
+  ]
+}
