@@ -682,7 +682,9 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   if (isMobile) {
     splatTransitionOverlay.startTransition(
       direction === 'next' ? 'up' : 'down',
-      sourceCanvas
+      sourceCanvas,
+      currentSplatMesh,
+      viewer.camera ?? null
     )
   } else if (currentSplatMesh) {
     particleSystem.start(currentSplatMesh, direction === 'next' ? 'down' : 'up')
