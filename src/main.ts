@@ -4,6 +4,7 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { AnnotationManager, type Annotation } from './annotations/AnnotationManager'
 import { ParticleDisintegration } from './transitions/ParticleDisintegration'
 import { createOverlay } from './ui/overlay'
+import { createHUD } from './ui/hud'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) {
@@ -13,6 +14,11 @@ if (!app) {
 const viewerRoot = document.createElement('div')
 viewerRoot.id = 'viewer'
 app.appendChild(viewerRoot)
+
+const hudResult = createHUD()
+const hud = hudResult.element
+app.appendChild(hud)
+const showErrorToast = hudResult.showErrorToast
 
 const poster = document.createElement('div')
 poster.className = 'poster'
@@ -82,19 +88,30 @@ const particleSystem = new ParticleDisintegration(threeScene)
 const annotationManager = new AnnotationManager(annotationsRoot)
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
-  console.log('Splat mesh ready')
   currentSplatMesh = splatMesh
-  if (splatMesh?.material) {
+  
+  // Handle scene removal (splatMesh is null/undefined)
+  if (!splatMesh) {
+    console.log('[MESH] scene removed')
+    return
+  }
+
+  console.log('[MESH] splat mesh ready')
+  if (splatMesh.material) {
     splatMesh.material.depthWrite = false
   }
+  
   const viewerAny = viewer as unknown as { splatMesh?: { getSplatCount: () => number } }
   if (viewerAny.splatMesh) {
-    console.log('Splat count', viewerAny.splatMesh.getSplatCount())
+    console.log('[MESH] splat count', viewerAny.splatMesh.getSplatCount())
   }
-  console.log('3D splat mesh ready')
-  console.log('Splat mesh parent', (splatMesh as unknown as { parent?: unknown }).parent)
+  
+  const meshParent = (splatMesh as unknown as { parent?: unknown }).parent
+  console.log('[MESH] parent attached:', !!meshParent)
+  
   const rendererInfo = viewer.renderer?.info
-  console.log('Renderer programs', rendererInfo?.programs?.length)
+  console.log('[MESH] renderer programs', rendererInfo?.programs?.length)
+  
   startRevealTransition()
   assertSplatVisibility('onSplatMeshChanged')
 })
@@ -109,23 +126,30 @@ type SplatEntry = {
   }>
 }
 
+// Load state management
+type LoadState = 'IDLE' | 'LOADING'
+let loadState: LoadState = 'IDLE'
+let activeLoadId = 0
+let currentUrl: string | null = null
+let currentSceneHandle: number | null = null
+let pendingNavigation: 'next' | 'prev' | null = null
+
 const splatCache = new Map<string, string>()
 let splatEntries: SplatEntry[] = []
 let currentIndex = 0
-let hasScene = false
-let isLoading = false
 let isTransitioning = false
 let currentPoses: SplatEntry['cameraPoses'] = undefined
 let isSnapping = false
 
-const logSplatHead = async (url: string) => {
+const logSplatHead = async (url: string): Promise<{ status: number; contentLength: string | null } | null> => {
   try {
     const headResponse = await fetch(url, { method: 'HEAD' })
-    console.log('PLY HEAD status', url, headResponse.status)
     const length = headResponse.headers.get('content-length')
-    console.log('PLY content-length', url, length)
+    console.log('[PLY HEAD]', url, 'status:', headResponse.status, 'content-length:', length)
+    return { status: headResponse.status, contentLength: length }
   } catch (error) {
-    console.warn('PLY HEAD failed', url, error)
+    console.warn('[PLY HEAD] failed', url, error)
+    return null
   }
 }
 
@@ -135,65 +159,205 @@ const loadManifest = async () => {
     throw new Error(`Manifest fetch failed: ${response.status}`)
   }
   const data = (await response.json()) as SplatEntry[]
-  console.log('Manifest entries', data.length)
+  console.log('[MANIFEST] entries:', data.length)
   return data
 }
 
 const prefetchSplat = async (entry: SplatEntry) => {
+  // Just prefetch to browser cache - don't create blob URLs
+  // The viewer library doesn't support blob URLs, so we rely on HTTP cache
   if (splatCache.has(entry.id)) return
   const url = `/splats/${entry.file}`
-  await logSplatHead(url)
-  const response = await fetch(url)
-  if (!response.ok) {
-    console.warn('Prefetch failed', url, response.status)
-    return
+  try {
+    // Prefetch to browser HTTP cache only
+    const response = await fetch(url, { method: 'HEAD' })
+    if (response.ok) {
+      console.log('[PREFETCH] cached', url)
+      splatCache.set(entry.id, 'cached') // Mark as cached, but use original URL
+    } else {
+      console.warn('[PREFETCH] failed', url, response.status)
+    }
+  } catch (error) {
+    console.warn('[PREFETCH] error', url, error)
   }
-  const blob = await response.blob()
-  console.log('Prefetch size', url, blob.size)
-  const objectUrl = URL.createObjectURL(blob)
-  splatCache.set(entry.id, objectUrl)
 }
 
-const loadSplat = async (index: number) => {
-  if (isLoading) return
-  const entry = splatEntries[index]
-  if (!entry) return
-  isLoading = true
-  showPoster('2D preview ready')
+const waitForRAF = (): Promise<void> => {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        resolve()
+      })
+    })
+  })
+}
 
+const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => {
   const url = `/splats/${entry.file}`
-  await logSplatHead(url)
+  const oldUrl = currentUrl
 
-  if (hasScene) {
-    await viewer.removeSplatScene(0, false)
+  console.log('[SWAP] start from', oldUrl || 'none', 'to', url)
+
+  // Step 1: Validate URL exists
+  const headInfo = await logSplatHead(url)
+  if (!headInfo || headInfo.status !== 200) {
+    throw new Error(`PLY file not found or invalid: ${url} (status: ${headInfo?.status || 'unknown'})`)
   }
 
-  const sourceUrl = splatCache.get(entry.id) ?? url
-  await viewer.addSplatScene(sourceUrl, {
+  // Step 2: Unload previous scene
+  if (currentSceneHandle !== null || currentUrl !== null) {
+    const handleToRemove = currentSceneHandle !== null ? currentSceneHandle : 0
+    console.log('[UNLOAD] removing scene handle', handleToRemove)
+    try {
+      await viewer.removeSplatScene(handleToRemove, false)
+      currentSceneHandle = null
+      currentUrl = null
+      console.log('[UNLOAD] ok')
+    } catch (error) {
+      console.warn('[UNLOAD] error', error)
+      // Continue anyway - might already be removed
+      currentSceneHandle = null
+      currentUrl = null
+    }
+
+    // Wait for GPU state to settle
+    await waitForRAF()
+  }
+
+  // Check if this load is still current
+  if (loadId !== activeLoadId) {
+    console.log('[SWAP] cancelled - stale loadId', loadId, 'vs', activeLoadId)
+    return
+  }
+
+  // Step 3: Load new scene with timeout
+  // Always use original URL - browser cache handles prefetching
+  // The viewer library doesn't support blob URLs
+  const sourceUrl = url
+  console.log('[LOAD] starting', sourceUrl)
+
+  const loadPromise = viewer.addSplatScene(sourceUrl, {
     showLoadingUI: true,
     progressiveLoad: true,
     splatAlphaRemovalThreshold: 5,
     rotation: [1, 0, 0, 0],
     onProgress: (percent: number) => {
-      console.log('Splat load progress', entry.id, percent)
+      if (loadId === activeLoadId) {
+        console.log('[LOAD] progress', entry.id, percent + '%')
+      }
     },
   })
 
-  if (sourceUrl !== url) {
-    URL.revokeObjectURL(sourceUrl)
-    splatCache.delete(entry.id)
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Load timeout after 25s: ${url}`))
+    }, 25000)
+  })
+
+  try {
+    const sceneHandleResult = await Promise.race([loadPromise, timeoutPromise])
+    console.log('[LOAD] ok, scene handle result:', sceneHandleResult)
+
+    // Check again if this load is still current
+    if (loadId !== activeLoadId) {
+      console.log('[LOAD] cancelled - stale loadId after completion', loadId, 'vs', activeLoadId)
+      // Try to remove the scene we just loaded if we got a handle
+      if (typeof sceneHandleResult === 'number') {
+        try {
+          await viewer.removeSplatScene(sceneHandleResult, false)
+        } catch (error) {
+          console.warn('[LOAD] cleanup error', error)
+        }
+      }
+      return
+    }
+
+    // Handle both cases: if it returns a number (handle) or void
+    currentSceneHandle = typeof sceneHandleResult === 'number' ? sceneHandleResult : 0
+    currentUrl = url
+
+    // Wait for visibility (2 RAF frames)
+    await waitForRAF()
+    await waitForRAF()
+
+    console.log('[VISIBLE] ok')
+  } catch (error) {
+    console.error('[LOAD] failed', error)
+    throw error
+  }
+}
+
+const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
+  if (loadState === 'LOADING') {
+    console.log('[LOAD] already in progress, ignoring request for index', index)
+    return
   }
 
-  currentIndex = index
-  hasScene = true
-  isLoading = false
-  currentPoses = entry.cameraPoses
-  setAnnotationsForEntry(entry.id)
-  assertSplatVisibility('loadSplat')
+  const entry = splatEntries[index]
+  if (!entry) {
+    console.error('[LOAD] invalid index', index)
+    return
+  }
 
-  const nextIndex = (currentIndex + 1) % splatEntries.length
-  if (splatEntries[nextIndex]) {
-    void prefetchSplat(splatEntries[nextIndex])
+  loadState = 'LOADING'
+  const loadId = ++activeLoadId
+  const oldIndex = currentIndex
+
+  console.log('[LOAD] starting index', index, 'entry:', entry.id, 'loadId:', loadId)
+
+  showPoster('Loading splat...')
+
+  try {
+    await swapToSplat(entry, loadId)
+
+    // Check again if this load is still current
+    if (loadId !== activeLoadId) {
+      console.log('[LOAD] cancelled - stale loadId before state update', loadId, 'vs', activeLoadId)
+      loadState = 'IDLE'
+      return
+    }
+
+    currentIndex = index
+    currentPoses = entry.cameraPoses
+    setAnnotationsForEntry(entry.id)
+    // Note: assertSplatVisibility is called from onSplatMeshChanged callback
+    // when the mesh is actually ready, not here
+
+    loadState = 'IDLE'
+    console.log('[LOAD] complete index', index, 'entry:', entry.id)
+
+    // Prefetch next
+    const nextIndex = (currentIndex + 1) % splatEntries.length
+    if (splatEntries[nextIndex]) {
+      void prefetchSplat(splatEntries[nextIndex])
+    }
+
+    // Process pending navigation
+    if (pendingNavigation) {
+      const direction = pendingNavigation
+      pendingNavigation = null
+      const targetIndex =
+        direction === 'next'
+          ? (currentIndex + 1) % splatEntries.length
+          : (currentIndex - 1 + splatEntries.length) % splatEntries.length
+      void loadSplat(targetIndex)
+    }
+  } catch (error) {
+    console.error('[LOAD] error', error)
+    loadState = 'IDLE'
+
+    // Retry once automatically
+    if (retryCount === 0) {
+      console.log('[LOAD] retrying once...')
+      setTimeout(() => {
+        void loadSplat(index, 1)
+      }, 1000)
+    } else {
+      // Show error toast
+      showErrorToast('Failed to load splat — tap to retry', () => {
+        void loadSplat(index, 0)
+      })
+    }
   }
 }
 
@@ -213,12 +377,7 @@ const setupOrbitControls = () => {
   viewer.controls.enableZoom = false
   viewer.controls.enablePan = false
   viewer.controls.enableRotate = true
-  controls.addEventListener('change', () => {
-    const camera = viewer.camera
-    if (!camera) return
-    const pos = camera.position
-    console.log('Orbit change', pos.x, pos.y, pos.z, 'target', controls.target.toArray())
-  })
+  // Removed excessive orbit change logging - was firing every frame during damping
 }
 
 const setupPoseSnapping = () => {
@@ -288,34 +447,136 @@ const setupPoseSnapping = () => {
   })
 }
 
-const setupPointerDebug = () => {
-  const logPointer = (event: PointerEvent, phase: string) => {
-    console.log(`Pointer ${phase}`, event.pointerId, event.pointerType)
+const setupOrbitStabilization = () => {
+  const controls = viewer.controls as
+    | (THREE.EventDispatcher & { enabled: boolean })
+    | undefined
+  if (!controls) return
+
+  let activePointerId: number | null = null
+  let isDragging = false
+
+  const stopDrag = (pointerId: number | null) => {
+    if (pointerId === null) return
+    if (activePointerId !== pointerId) return
+
+    try {
+      if (viewerRoot.hasPointerCapture(pointerId)) {
+        viewerRoot.releasePointerCapture(pointerId)
+      }
+    } catch (error) {
+      // Ignore errors - pointer may already be released
+    }
+
+    activePointerId = null
+    isDragging = false
   }
 
-  viewerRoot.addEventListener('pointerdown', (event) => {
-    logPointer(event, 'down')
+  const handlePointerDown = (event: PointerEvent) => {
+    // Don't start drag if clicking on HUD interactive elements
+    const target = event.target as HTMLElement
+    if (target.closest('#hud button, #hud input, #hud form')) {
+      return
+    }
+
+    // Only handle primary button (left mouse button)
+    if (event.button !== 0 && event.button !== undefined) {
+      return
+    }
+
+    if (activePointerId !== null) {
+      stopDrag(activePointerId)
+    }
+
+    activePointerId = event.pointerId
+    isDragging = true
+
     try {
       viewerRoot.setPointerCapture(event.pointerId)
     } catch (error) {
       console.warn('setPointerCapture failed', event.pointerId, error)
+      activePointerId = null
+      isDragging = false
     }
-  })
+  }
 
-  viewerRoot.addEventListener('pointermove', (event) => {
-    logPointer(event, 'move')
-  })
+  const handlePointerMove = (event: PointerEvent) => {
+    if (activePointerId !== event.pointerId) return
 
-  viewerRoot.addEventListener('pointerup', (event) => {
-    logPointer(event, 'up')
-    try {
-      if (viewerRoot.hasPointerCapture(event.pointerId)) {
-        viewerRoot.releasePointerCapture(event.pointerId)
-      }
-    } catch (error) {
-      console.warn('releasePointerCapture failed', event.pointerId, error)
+    // Stop drag if buttons are released during move
+    if (event.buttons === 0) {
+      stopDrag(event.pointerId)
+      return
     }
-  })
+  }
+
+  const handlePointerUp = (event: PointerEvent) => {
+    if (activePointerId === event.pointerId) {
+      stopDrag(event.pointerId)
+    }
+  }
+
+  const handlePointerCancel = (event: PointerEvent) => {
+    if (activePointerId === event.pointerId) {
+      stopDrag(event.pointerId)
+    }
+  }
+
+  const handleMouseUp = (event: MouseEvent) => {
+    if (activePointerId !== null) {
+      stopDrag(activePointerId)
+    }
+  }
+
+  const handleContextMenu = (event: MouseEvent) => {
+    if (activePointerId !== null) {
+      stopDrag(activePointerId)
+    }
+    // Prevent context menu from interfering
+    event.preventDefault()
+  }
+
+  const handleMouseLeave = () => {
+    if (activePointerId !== null) {
+      stopDrag(activePointerId)
+    }
+  }
+
+  const handleBlur = () => {
+    if (activePointerId !== null) {
+      stopDrag(activePointerId)
+    }
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.hidden && activePointerId !== null) {
+      stopDrag(activePointerId)
+    }
+  }
+
+  // Add event listeners
+  viewerRoot.addEventListener('pointerdown', handlePointerDown)
+  viewerRoot.addEventListener('pointermove', handlePointerMove)
+  viewerRoot.addEventListener('pointerup', handlePointerUp)
+  viewerRoot.addEventListener('pointercancel', handlePointerCancel)
+  window.addEventListener('mouseup', handleMouseUp)
+  window.addEventListener('contextmenu', handleContextMenu)
+  viewerRoot.addEventListener('mouseleave', handleMouseLeave)
+  window.addEventListener('blur', handleBlur)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+
+  // Cleanup function (not called here, but available if needed)
+  return () => {
+    viewerRoot.removeEventListener('pointerdown', handlePointerDown)
+    viewerRoot.removeEventListener('pointermove', handlePointerMove)
+    viewerRoot.removeEventListener('pointerup', handlePointerUp)
+    viewerRoot.removeEventListener('pointercancel', handlePointerCancel)
+    window.removeEventListener('mouseup', handleMouseUp)
+    window.removeEventListener('contextmenu', handleContextMenu)
+    viewerRoot.removeEventListener('mouseleave', handleMouseLeave)
+    window.removeEventListener('blur', handleBlur)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }
 }
 
 const showPoster = (status: string) => {
@@ -364,18 +625,27 @@ const setAnnotationsForEntry = (id: string) => {
 
 const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
   if (isTransitioning || splatEntries.length < 2) return
+
+  // If currently loading, queue the navigation
+  if (loadState === 'LOADING') {
+    console.log('[NAV] queuing navigation', direction, '(currently loading)')
+    pendingNavigation = direction
+    return
+  }
+
   isTransitioning = true
-  console.log('Scroll delta', delta)
+  console.log('[NAV] start', direction, 'delta:', delta)
 
   const targetIndex =
     direction === 'next'
       ? (currentIndex + 1) % splatEntries.length
       : (currentIndex - 1 + splatEntries.length) % splatEntries.length
 
-  console.log('Navigate splat', currentIndex, '->', targetIndex)
+  console.log('[NAV] index', currentIndex, '->', targetIndex)
+
   if (currentSplatMesh) {
     const particleCount = particleSystem.start(currentSplatMesh, direction === 'next' ? 'down' : 'up')
-    console.log('Particle disintegration start', particleCount)
+    console.log('[NAV] particle disintegration start', particleCount)
   }
 
   const transitionStart = performance.now()
@@ -389,7 +659,7 @@ const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
       requestAnimationFrame(tick)
       return
     }
-    console.log('Particle disintegration end')
+    console.log('[NAV] particle disintegration end')
     await loadSplat(targetIndex)
     renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
     isTransitioning = false
@@ -429,26 +699,37 @@ const setupSplatNavigation = () => {
 }
 
 const start = async () => {
-  console.log('Device', isMobile ? 'mobile' : 'desktop')
-  console.log('Renderer pixel ratio', viewer.renderer?.getPixelRatio())
-  console.log('View-dependent loading enabled', ENABLE_VIEW_DEPENDENT_LOADING)
+  console.log('[INIT] Device', isMobile ? 'mobile' : 'desktop')
+  console.log('[INIT] Renderer pixel ratio', viewer.renderer?.getPixelRatio())
+  console.log('[INIT] View-dependent loading enabled', ENABLE_VIEW_DEPENDENT_LOADING)
   splatEntries = await loadManifest()
+  
+  if (splatEntries.length === 0) {
+    console.error('[INIT] No splat entries in manifest')
+    showErrorToast('No splats found in manifest')
+    return
+  }
+
+  console.log('[INIT] Loading first splat (index 0)')
   await loadSplat(0)
   currentPoses = splatEntries[0]?.cameraPoses
-  setupPointerDebug()
+  
   setupOrbitControls()
+  setupOrbitStabilization()
   setupPoseSnapping()
   setupSplatNavigation()
   viewer.start()
+  
   const camera = viewer.camera
   if (camera) {
-    console.log('Camera position', camera.position.toArray())
+    console.log('[INIT] Camera position', camera.position.toArray())
     const target = (viewer.controls as unknown as { target?: THREE.Vector3 })?.target
     if (target) {
       camera.lookAt(target)
-      console.log('Camera target', target.toArray())
+      console.log('[INIT] Camera target', target.toArray())
     }
   }
+  
   const animate = (time: number) => {
     if (viewer.camera) {
       annotationManager.update(viewer.camera)
