@@ -293,8 +293,28 @@ const setupPointerDebug = () => {
     console.log(`Pointer ${phase}`, event.pointerId, event.pointerType)
   }
 
+  const controls = viewer.controls as { enabled: boolean } | undefined
+  let activePointerId: number | null = null
+  let isDragging = false
+
+  const stopDragging = (reason: string) => {
+    if (!isDragging) return
+    isDragging = false
+    activePointerId = null
+    console.log('Drag end', reason)
+    if (controls) {
+      controls.enabled = false
+      requestAnimationFrame(() => {
+        controls.enabled = true
+      })
+    }
+  }
+
   viewerRoot.addEventListener('pointerdown', (event) => {
     logPointer(event, 'down')
+    if (event.pointerType === 'mouse' && event.button !== 2) return
+    isDragging = true
+    activePointerId = event.pointerId
     try {
       viewerRoot.setPointerCapture(event.pointerId)
     } catch (error) {
@@ -304,6 +324,10 @@ const setupPointerDebug = () => {
 
   viewerRoot.addEventListener('pointermove', (event) => {
     logPointer(event, 'move')
+    if (!isDragging || activePointerId !== event.pointerId) return
+    if (event.buttons === 0) {
+      stopDragging('buttons=0')
+    }
   })
 
   viewerRoot.addEventListener('pointerup', (event) => {
@@ -314,6 +338,35 @@ const setupPointerDebug = () => {
       }
     } catch (error) {
       console.warn('releasePointerCapture failed', event.pointerId, error)
+    }
+    if (activePointerId === event.pointerId) {
+      stopDragging('pointerup')
+    }
+  })
+
+  viewerRoot.addEventListener('pointercancel', (event) => {
+    logPointer(event, 'cancel')
+    if (activePointerId === event.pointerId) {
+      stopDragging('pointercancel')
+    }
+  })
+
+  viewerRoot.addEventListener('mouseleave', () => {
+    stopDragging('mouseleave')
+  })
+
+  window.addEventListener('blur', () => {
+    stopDragging('blur')
+  })
+
+  window.addEventListener('mouseup', () => {
+    stopDragging('mouseup')
+  })
+
+  viewerRoot.addEventListener('contextmenu', (event) => {
+    if (isDragging) {
+      event.preventDefault()
+      stopDragging('contextmenu')
     }
   })
 }
