@@ -21,6 +21,12 @@ type Manifest = { splats: ManifestSplat[] }
 const ENABLE_PARTICLE_TRANSITIONS = true
 const ENABLE_2D_TO_3D_REVEAL = true
 const ENABLE_VIEW_DEPENDENT_LOADING = false
+const DISABLE_AUTO_SCROLL = true
+const MIN_IDLE_DWELL_MS = 600
+
+const urlParams = new URLSearchParams(window.location.search)
+const debugMode = urlParams.get('debug') === '1'
+const safeMode = urlParams.get('safe') === '1'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) {
@@ -91,6 +97,9 @@ let isLoading = false
 let isDragging = false
 let lastNavTime = 0
 let activePointerId: number | null = null
+let currentSplatCenter = new THREE.Vector3(0, 0, 0)
+let debugMarker: THREE.Object3D | null = null
+let autoframeTimers: number[] = []
 
 const logSplatHead = async (url: string) => {
   try {
@@ -149,8 +158,9 @@ const animateCameraPose = (pose: CameraPose) => {
   if (navigator.vibrate) navigator.vibrate(10)
   const startPos = camera.position.clone()
   const startTarget = controls.target.clone()
-  const endPos = new THREE.Vector3(...pose.position)
-  const endTarget = new THREE.Vector3(...pose.target)
+  const center = currentSplatCenter.clone()
+  const endPos = new THREE.Vector3(...pose.position).add(center)
+  const endTarget = new THREE.Vector3(...pose.target).add(center)
   const start = performance.now()
   const duration = 650
   const animate = (time: number) => {
@@ -201,29 +211,185 @@ const updateSplatLayerSize = () => {
   particleOverlay.resize()
 }
 
-const loadSplat = async (entry: ManifestSplat) => {
-  if (isLoading) return
-  isLoading = true
-  const statusEl = poster.querySelector<HTMLParagraphElement>('.poster__status')
-  if (statusEl) statusEl.textContent = 'Loading 0%'
-  poster.classList.remove('poster--hidden')
-  await logSplatHead(entry.file)
+const toVector3 = (value: unknown) => {
+  if (!value) return null
+  if (value instanceof THREE.Vector3) return value.clone()
+  if (Array.isArray(value) && value.length >= 3) {
+    return new THREE.Vector3(Number(value[0]), Number(value[1]), Number(value[2]))
+  }
+  if (typeof value === 'object' && 'x' in value && 'y' in value && 'z' in value) {
+    const { x, y, z } = value as { x: number; y: number; z: number }
+    return new THREE.Vector3(Number(x), Number(y), Number(z))
+  }
+  return null
+}
 
-  await viewer.removeSplatScene(0, false)
-  await viewer.addSplatScene(entry.file, {
-    showLoadingUI: true,
-    progressiveLoad: true,
-    splatAlphaRemovalThreshold: 5,
-    rotation: [1, 0, 0, 0],
-    onProgress: (percent: number) => {
-      if (statusEl) statusEl.textContent = `Loading ${Math.round(percent)}%`
-    },
+const normalizeBounds = (candidate: unknown) => {
+  if (!candidate) return null
+  if (typeof candidate === 'object' && 'center' in candidate && 'radius' in candidate) {
+    const center = toVector3((candidate as { center: unknown }).center)
+    const radius = Number((candidate as { radius: number }).radius)
+    if (center && Number.isFinite(radius)) return { center, radius }
+  }
+  const fromMinMax = (minInput: unknown, maxInput: unknown) => {
+    const min = toVector3(minInput)
+    const max = toVector3(maxInput)
+    if (!min || !max) return null
+    const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
+    const radius = center.distanceTo(max)
+    if (!Number.isFinite(radius)) return null
+    return { center, radius }
+  }
+  if (typeof candidate === 'object' && 'min' in candidate && 'max' in candidate) {
+    const box = candidate as { min: unknown; max: unknown }
+    return fromMinMax(box.min, box.max)
+  }
+  if (Array.isArray(candidate) && candidate.length >= 2) {
+    return fromMinMax(candidate[0], candidate[1])
+  }
+  return null
+}
+
+const computeBoundsFromMesh = (mesh: unknown) => {
+  if (!mesh || typeof mesh !== 'object') return null
+  if (!('getSplatCount' in mesh) || !('getSplatCenter' in mesh)) return null
+  const splatMesh = mesh as {
+    getSplatCount: () => number
+    getSplatCenter: (index: number, out: THREE.Vector3) => void
+  }
+  const total = splatMesh.getSplatCount()
+  if (!total || !Number.isFinite(total)) return null
+  const sampleCount = Math.min(2000, total)
+  const stride = Math.max(1, Math.floor(total / sampleCount))
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity)
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity)
+  const temp = new THREE.Vector3()
+  for (let i = 0; i < sampleCount; i += 1) {
+    const splatIndex = i * stride
+    splatMesh.getSplatCenter(splatIndex, temp)
+    min.min(temp)
+    max.max(temp)
+  }
+  if (!Number.isFinite(min.x) || !Number.isFinite(max.x)) return null
+  const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
+  const radius = center.distanceTo(max)
+  if (!Number.isFinite(radius) || radius <= 0) return null
+  return { center, radius }
+}
+
+const getSplatBounds = () => {
+  const scene = viewer?.getSplatScene?.(0) ?? viewer?.splatScene ?? null
+  const candidates = [
+    scene?.getSceneBounds?.(),
+    scene?.getSceneBoundingSphere?.(),
+    scene?.getBoundingSphere?.(),
+    (scene as { bounds?: unknown } | null)?.bounds,
+    viewer?.getSceneBounds?.(),
+    viewer?.getSceneBoundingSphere?.(),
+    (viewer as { bounds?: unknown } | null)?.bounds,
+  ]
+  for (const candidate of candidates) {
+    const normalized = normalizeBounds(candidate)
+    if (normalized) return normalized
+  }
+  const mesh = (scene as { splatMesh?: unknown } | null)?.splatMesh ?? viewer?.splatMesh ?? viewer?.getSplatMesh?.(0)
+  const meshBounds = computeBoundsFromMesh(mesh)
+  if (meshBounds) return meshBounds
+  return null
+}
+
+const clearAutoframeRetries = () => {
+  autoframeTimers.forEach((timer) => window.clearTimeout(timer))
+  autoframeTimers = []
+}
+
+const updateDebugMarker = (center: THREE.Vector3) => {
+  if (!debugMode) {
+    if (debugMarker) {
+      threeScene.remove(debugMarker)
+      const marker = debugMarker as THREE.AxesHelper
+      marker.geometry.dispose()
+      if (Array.isArray(marker.material)) {
+        marker.material.forEach((material) => material.dispose())
+      } else {
+        marker.material.dispose()
+      }
+      debugMarker = null
+    }
+    return
+  }
+  if (!debugMarker) {
+    debugMarker = new THREE.AxesHelper(0.45)
+    threeScene.add(debugMarker)
+  }
+  debugMarker.position.copy(center)
+}
+
+const applyCameraPose = (position: THREE.Vector3, target: THREE.Vector3) => {
+  const camera = viewer?.camera as THREE.PerspectiveCamera | undefined
+  if (!camera) return
+  const controls = viewer?.controls as { target: THREE.Vector3; update?: () => void } | undefined
+  camera.position.copy(position)
+  camera.lookAt(target)
+  if (controls) {
+    controls.target.copy(target)
+    controls.update?.()
+  }
+  viewer?.requestRender?.()
+  viewer?.forceRender?.()
+}
+
+const scheduleAutoframeRetries = (center: THREE.Vector3) => {
+  clearAutoframeRetries()
+  if (!debugMode && !safeMode) return
+  const fallbackOffsets: Array<[number, number, number]> = [
+    [6, 0, 0],
+    [0, 6, 0],
+  ]
+  fallbackOffsets.forEach((offset, index) => {
+    const timer = window.setTimeout(() => {
+      const position = new THREE.Vector3(...offset).add(center)
+      applyCameraPose(position, center)
+      console.log('Autoframe retry', index + 1, 'pos', position.toArray())
+    }, 450 * (index + 1))
+    autoframeTimers.push(timer)
   })
+}
 
-  setOverlay(entry)
-  setAnnotations(entry)
-  renderPoseChips(entry)
-  if (ENABLE_2D_TO_3D_REVEAL) {
+const frameCameraToSplat = () => {
+  const camera = viewer?.camera as THREE.PerspectiveCamera | undefined
+  if (!camera) return
+  const bounds = getSplatBounds()
+  const center = bounds?.center ?? new THREE.Vector3(0, 0, 0)
+  const radius =
+    bounds && Number.isFinite(bounds.radius) && bounds.radius > 0 ? bounds.radius : 5
+  const controls = viewer?.controls as { target: THREE.Vector3 } | undefined
+  const target = controls?.target ?? new THREE.Vector3()
+  const direction = camera.position.clone().sub(target)
+  if (direction.lengthSq() < 0.0001) {
+    direction.set(0, 0, 1)
+  } else {
+    direction.normalize()
+  }
+  const distance = Math.max(radius * 2.2, 0.1)
+  const position = center.clone().addScaledVector(direction, distance)
+  applyCameraPose(position, center)
+  currentSplatCenter = center.clone()
+  updateDebugMarker(center)
+  scheduleAutoframeRetries(center)
+  console.log('Frame camera', {
+    center: center.toArray(),
+    radius: Math.round(radius * 100) / 100,
+  })
+}
+
+const revealPoster = () =>
+  new Promise<void>((resolve) => {
+    if (!ENABLE_2D_TO_3D_REVEAL) {
+      poster.classList.add('poster--hidden')
+      resolve()
+      return
+    }
     const start = performance.now()
     const duration = 600
     const fade = (time: number) => {
@@ -234,12 +400,48 @@ const loadSplat = async (entry: ManifestSplat) => {
       } else {
         poster.classList.add('poster--hidden')
         poster.style.opacity = ''
+        resolve()
       }
     }
     requestAnimationFrame(fade)
-  } else {
-    poster.classList.add('poster--hidden')
-  }
+  })
+
+const loadSplat = async (entry: ManifestSplat) => {
+  if (isLoading) return
+  isLoading = true
+  clearAutoframeRetries()
+  const statusEl = poster.querySelector<HTMLParagraphElement>('.poster__status')
+  if (statusEl) statusEl.textContent = 'Loading 0%'
+  poster.classList.remove('poster--hidden')
+  const loadStart = performance.now()
+  console.log('LOAD start', entry.file)
+  await logSplatHead(entry.file)
+
+  await viewer.removeSplatScene(0, false)
+  let lastProgressLogged = -1
+  await viewer.addSplatScene(entry.file, {
+    showLoadingUI: true,
+    progressiveLoad: true,
+    splatAlphaRemovalThreshold: 5,
+    rotation: [1, 0, 0, 0],
+    onProgress: (percent: number) => {
+      const rounded = Math.round(percent)
+      if (statusEl) statusEl.textContent = `Loading ${rounded}%`
+      if (rounded >= lastProgressLogged + 5 || rounded === 100) {
+        lastProgressLogged = rounded
+        console.log('LOAD progress', entry.file, `${rounded}%`)
+      }
+    },
+  })
+  const loadMs = Math.round(performance.now() - loadStart)
+  console.log('LOAD done', entry.file, `${loadMs}ms`)
+  frameCameraToSplat()
+  console.log('SPLAT ready', entry.file)
+
+  setOverlay(entry)
+  setAnnotations(entry)
+  renderPoseChips(entry)
+  await revealPoster()
   isLoading = false
 }
 
@@ -314,6 +516,11 @@ const setupNavigation = (feed: ReturnType<typeof createFeedController>) => {
 
   const tryNavigate = (direction: 'next' | 'prev') => {
     const now = performance.now()
+    if (feed.getState() !== 'IDLE') {
+      if (direction === 'next') feed.goNext()
+      else feed.goPrev()
+      return
+    }
     if (now - lastNavTime < 350) return
     lastNavTime = now
     if (direction === 'next') feed.goNext()
@@ -449,11 +656,15 @@ const start = async () => {
     onTransitionIn: async () => {
       setQualityForMotion(false)
     },
-    debug: true,
+    debug: debugMode,
+    minIdleMs: MIN_IDLE_DWELL_MS,
   })
 
   await loadSplat(entries[0])
   setupNavigation(feed)
+  if (DISABLE_AUTO_SCROLL) {
+    console.log('Auto scroll disabled')
+  }
 
   const tick = (time: number) => {
     annotationManager.update(viewer.camera as THREE.PerspectiveCamera)
