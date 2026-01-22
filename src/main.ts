@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { AnnotationManager, type Annotation } from './annotations/AnnotationManager'
 import { ParticleDisintegration } from './transitions/ParticleDisintegration'
+import { ParticleOverlay } from './transitions/ParticleOverlay'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -19,6 +20,8 @@ const hudResult = createHUD()
 const hud = hudResult.element
 app.appendChild(hud)
 const showErrorToast = hudResult.showErrorToast
+const showLoading = hudResult.showLoading
+const hideLoading = hudResult.hideLoading
 
 const poster = document.createElement('div')
 poster.className = 'poster'
@@ -36,6 +39,25 @@ app.appendChild(annotationsRoot)
 
 const overlay = createOverlay()
 app.appendChild(overlay)
+
+// Loading indicator
+const loadingIndicator = document.createElement('div')
+loadingIndicator.className = 'loading-indicator'
+loadingIndicator.innerHTML = '<div class="loading-indicator__bar"></div>'
+app.appendChild(loadingIndicator)
+const loadingBar = loadingIndicator.querySelector<HTMLDivElement>('.loading-indicator__bar')!
+
+const showLoadingIndicator = (progress: number = 0) => {
+  loadingIndicator.classList.add('loading-indicator--active')
+  loadingBar.style.width = `${Math.min(100, Math.max(0, progress))}%`
+}
+
+const hideLoadingIndicator = () => {
+  loadingIndicator.classList.remove('loading-indicator--active')
+  setTimeout(() => {
+    loadingBar.style.width = '0%'
+  }, 200)
+}
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
@@ -85,6 +107,7 @@ let currentSplatMesh:
   | null = null
 
 const particleSystem = new ParticleDisintegration(threeScene)
+const particleOverlay = new ParticleOverlay(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
@@ -111,6 +134,9 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   
   const rendererInfo = viewer.renderer?.info
   console.log('[MESH] renderer programs', rendererInfo?.programs?.length)
+  
+  // Hide loading indicator when mesh is visible
+  hideLoading()
   
   startRevealTransition()
   assertSplatVisibility('onSplatMeshChanged')
@@ -244,6 +270,7 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
     onProgress: (percent: number) => {
       if (loadId === activeLoadId) {
         console.log('[LOAD] progress', entry.id, percent + '%')
+        showLoadingIndicator(percent)
       }
     },
   })
@@ -281,8 +308,14 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
     await waitForRAF()
 
     console.log('[VISIBLE] ok')
+    hideLoadingIndicator()
   } catch (error) {
     console.error('[LOAD] failed', error)
+    hideLoadingIndicator()
+    // Stop particle overlay on error
+    if (isMobile) {
+      particleOverlay.stop()
+    }
     throw error
   }
 }
@@ -305,6 +338,7 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
   console.log('[LOAD] starting index', index, 'entry:', entry.id, 'loadId:', loadId)
 
   showPoster('Loading splat...')
+  showLoading()
 
   try {
     await swapToSplat(entry, loadId)
@@ -323,6 +357,7 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     // when the mesh is actually ready, not here
 
     loadState = 'IDLE'
+    hideLoading()
     console.log('[LOAD] complete index', index, 'entry:', entry.id)
 
     // Prefetch next
@@ -344,6 +379,12 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
   } catch (error) {
     console.error('[LOAD] error', error)
     loadState = 'IDLE'
+    hideLoading()
+    
+    // Stop particle overlay on error
+    if (isMobile) {
+      particleOverlay.stop()
+    }
 
     // Retry once automatically
     if (retryCount === 0) {
@@ -618,7 +659,7 @@ const setAnnotationsForEntry = (id: string) => {
   annotationManager.setAnnotations(annotationSets[id] ?? [])
 }
 
-const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
+const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   if (isTransitioning || splatEntries.length < 2) return
 
   // If currently loading, queue the navigation
@@ -629,7 +670,7 @@ const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
   }
 
   isTransitioning = true
-  console.log('[NAV] start', direction, 'delta:', delta)
+  console.log('[NAV] start', direction)
 
   const targetIndex =
     direction === 'next'
@@ -637,6 +678,11 @@ const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
       : (currentIndex - 1 + splatEntries.length) % splatEntries.length
 
   console.log('[NAV] index', currentIndex, '->', targetIndex)
+
+  // Start particle overlay immediately (mobile)
+  if (isMobile) {
+    particleOverlay.start(direction === 'next' ? 'down' : 'up')
+  }
 
   if (currentSplatMesh) {
     const particleCount = particleSystem.start(currentSplatMesh, direction === 'next' ? 'down' : 'up')
@@ -658,12 +704,16 @@ const navigateSplat = async (direction: 'next' | 'prev', delta: number) => {
     await loadSplat(targetIndex)
     renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
     isTransitioning = false
+    // Fade out particle overlay when new splat is visible
+    if (isMobile) {
+      particleOverlay.fadeOut()
+    }
   }
   requestAnimationFrame(tick)
 }
 
 const setupSplatNavigation = () => {
-  let touchStartY = 0
+  // Desktop wheel navigation
   viewerRoot.addEventListener(
     'wheel',
     (event) => {
@@ -672,25 +722,134 @@ const setupSplatNavigation = () => {
     },
     { passive: true }
   )
-  viewerRoot.addEventListener(
-    'touchstart',
-    (event) => {
-      if (event.touches.length === 1) {
-        touchStartY = event.touches[0].clientY
+
+  // Mobile gesture handling with axis locking
+  if (!isMobile) return
+
+  let touchStartX = 0
+  let touchStartY = 0
+  let touchStartTime = 0
+  let gestureLock: 'vertical' | 'horizontal' | null = null
+  let activeTouchId: number | null = null
+  let totalDeltaY = 0
+  const LOCK_THRESHOLD = 15 // pixels to lock axis
+  const SWIPE_THRESHOLD = 80 // minimum distance for feed navigation
+  const VELOCITY_THRESHOLD = 0.3 // pixels per ms for velocity-based swipe
+
+  const handleTouchStart = (event: TouchEvent) => {
+    // Don't interfere with HUD interactions
+    const target = event.target as HTMLElement
+    if (target.closest('#hud button, #hud input, #hud form')) {
+      return
+    }
+
+    if (event.touches.length === 1 && activeTouchId === null) {
+      const touch = event.touches[0]
+      activeTouchId = touch.identifier
+      touchStartX = touch.clientX
+      touchStartY = touch.clientY
+      touchStartTime = performance.now()
+      gestureLock = null
+      totalDeltaY = 0
+
+      // Prevent default to stop browser scroll
+      event.preventDefault()
+    }
+  }
+
+  const handleTouchMove = (event: TouchEvent) => {
+    if (activeTouchId === null) return
+
+    const touch = Array.from(event.touches).find((t) => t.identifier === activeTouchId)
+    if (!touch) return
+
+    const deltaX = touch.clientX - touchStartX
+    const deltaY = touch.clientY - touchStartY
+    totalDeltaY = deltaY
+
+    // Lock axis after threshold
+    if (gestureLock === null) {
+      const absX = Math.abs(deltaX)
+      const absY = Math.abs(deltaY)
+      const distance = Math.sqrt(absX * absX + absY * absY)
+
+      if (distance > LOCK_THRESHOLD) {
+        gestureLock = absY > absX ? 'vertical' : 'horizontal'
       }
-    },
-    { passive: true }
-  )
-  viewerRoot.addEventListener(
-    'touchend',
-    (event) => {
-      if (event.changedTouches.length !== 1) return
-      const delta = touchStartY - event.changedTouches[0].clientY
-      if (Math.abs(delta) < 50) return
-      void navigateSplat(delta > 0 ? 'next' : 'prev', delta)
-    },
-    { passive: true }
-  )
+    }
+
+    // Handle horizontal rotation (yaw only)
+    if (gestureLock === 'horizontal') {
+      event.preventDefault()
+      const camera = viewer.camera
+      const controls = viewer.controls as unknown as {
+        enabled: boolean
+        target: THREE.Vector3
+      } | null
+
+      if (camera && controls) {
+        // Rotate camera around Y axis (yaw) relative to target
+        const rotationSpeed = 0.01
+        const angle = deltaX * rotationSpeed
+        
+        // Get camera position relative to target
+        const offset = camera.position.clone().sub(controls.target)
+        
+        // Rotate offset around Y axis
+        const rotation = new THREE.Matrix4().makeRotationY(angle)
+        offset.applyMatrix4(rotation)
+        
+        // Update camera position
+        camera.position.copy(controls.target).add(offset)
+        camera.lookAt(controls.target)
+        
+        // Update touch start for smooth continuous rotation
+        touchStartX = touch.clientX
+      }
+    } else if (gestureLock === 'vertical') {
+      // Prevent browser scroll during vertical gesture
+      event.preventDefault()
+    }
+  }
+
+  const handleTouchEnd = (event: TouchEvent) => {
+    if (activeTouchId === null) return
+
+    const touch = Array.from(event.changedTouches).find((t) => t.identifier === activeTouchId)
+    if (!touch) {
+      activeTouchId = null
+      gestureLock = null
+      return
+    }
+
+    const deltaY = totalDeltaY
+    const deltaTime = performance.now() - touchStartTime
+    const velocity = Math.abs(deltaY) / deltaTime
+
+    // Only trigger feed navigation if:
+    // 1. Gesture was locked to vertical, AND
+    // 2. Distance exceeds threshold OR velocity exceeds threshold
+    if (gestureLock === 'vertical' && (Math.abs(deltaY) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
+      event.preventDefault()
+      void navigateSplat(deltaY > 0 ? 'prev' : 'next', deltaY)
+    }
+
+    activeTouchId = null
+    gestureLock = null
+    totalDeltaY = 0
+  }
+
+  const handleTouchCancel = () => {
+    activeTouchId = null
+    gestureLock = null
+    totalDeltaY = 0
+  }
+
+  // Use non-passive listeners to prevent browser scroll
+  viewerRoot.addEventListener('touchstart', handleTouchStart, { passive: false })
+  viewerRoot.addEventListener('touchmove', handleTouchMove, { passive: false })
+  viewerRoot.addEventListener('touchend', handleTouchEnd, { passive: false })
+  viewerRoot.addEventListener('touchcancel', handleTouchCancel, { passive: false })
 }
 
 const start = async () => {

@@ -69,6 +69,10 @@ export const createHUD = () => {
     </div>
 
     <div class="hud__toast">Reposted!</div>
+    
+    <div class="hud__loading">
+      <div class="hud__loading-bar"></div>
+    </div>
   `
 
   // Get elements
@@ -202,5 +206,20 @@ export const createHUD = () => {
     }
   }
 
-  return { element: hud, showErrorToast }
+  // Loading indicator
+  const loadingEl = hud.querySelector<HTMLDivElement>('.hud__loading')
+  
+  const showLoading = () => {
+    if (loadingEl) {
+      loadingEl.classList.add('hud__loading--active')
+    }
+  }
+
+  const hideLoading = () => {
+    if (loadingEl) {
+      loadingEl.classList.remove('hud__loading--active')
+    }
+  }
+
+  return { element: hud, showErrorToast, showLoading, hideLoading }
 }
