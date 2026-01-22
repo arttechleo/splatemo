@@ -1,18 +1,11 @@
 /**
- * Transition overlay derived from the current splat.
- * Prefers real point data (projected to screen space), falls back to pixel sampling.
+ * Full-splat disintegration transition overlay.
+ * Samples entire frame from WebGL canvas, generates particles with directional motion.
  * No preserveDrawingBuffer; fallback to fade if capture fails.
  */
 
-import * as THREE from 'three'
-
 export const DEBUG_TRANSITION_OVERLAY = true
-export const DEBUG_SHOW_BAND_REGION = false
-
-type SplatMeshLike = {
-  getSplatCount: () => number
-  getSplatCenter: (index: number, out: THREE.Vector3) => void
-}
+export const DEBUG_SHOW_INFO = false
 
 type Particle = {
   x: number
@@ -27,8 +20,9 @@ type Particle = {
 }
 
 const TRANSITION_DURATION_MS = 1200
-const BAND_RATIO = 0.33
-const SAMPLE_STRIDE = 8
+const TAIL_DURATION_MS = 250
+const MIN_PARTICLES = 1500
+const MAX_PARTICLES = 4000
 const ALPHA_THRESHOLD = 15
 const VY_BASE = 5.5
 const VX_SPREAD = 1.8
@@ -36,7 +30,6 @@ const FALLOFF = 0.985
 const VELOCITY_DAMP = 0.995
 const JITTER_AMOUNT = 0.8
 const JITTER_DECAY = 0.92
-const TAIL_DURATION_MS = 250
 
 export class SplatTransitionOverlay {
   private overlay: HTMLCanvasElement | null = null
@@ -53,6 +46,13 @@ export class SplatTransitionOverlay {
   private transitionToken = 0
   private isFinishing = false
   private finishStartTime = 0
+  private debugInfo: {
+    mode: 'pixelSnapshot' | 'fallback'
+    particleCount: number
+    dpr: number
+    snapshotWidth: number
+    snapshotHeight: number
+  } | null = null
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('canvas')
@@ -82,9 +82,7 @@ export class SplatTransitionOverlay {
 
   startTransition(
     direction: 'up' | 'down',
-    sourceCanvas: HTMLCanvasElement | null,
-    splatMesh: SplatMeshLike | null = null,
-    camera: THREE.PerspectiveCamera | null = null
+    sourceCanvas: HTMLCanvasElement | null
   ): void {
     this.stop()
     if (!DEBUG_TRANSITION_OVERLAY) return
@@ -98,16 +96,14 @@ export class SplatTransitionOverlay {
     this.overlayOpacity = 1
     this.particles = []
     this.fallbackImage = null
+    this.debugInfo = null
 
     if (!sourceCanvas || !this.ctx || !this.overlay) return
 
     requestAnimationFrame(() => {
       if (token !== this.transitionToken) return
 
-      const usedRealData = this.tryRealPointData(splatMesh, camera, direction)
-      if (!usedRealData) {
-        this.captureAndSample(sourceCanvas)
-      }
+      this.captureAndSample(sourceCanvas)
 
       if (this.particles.length === 0 && !this.fallbackImage) return
       if (this.overlay) this.overlay.style.opacity = '1'
@@ -116,105 +112,51 @@ export class SplatTransitionOverlay {
     })
   }
 
-  private tryRealPointData(
-    splatMesh: SplatMeshLike | null,
-    camera: THREE.PerspectiveCamera | null,
-    direction: 'up' | 'down'
-  ): boolean {
-    if (!splatMesh || !camera) return false
-
-    const total = splatMesh.getSplatCount()
-    if (total === 0) return false
-
-    const W = window.innerWidth
-    const H = window.innerHeight
-    const bandTop = 0
-    const bandBottom = H * BAND_RATIO
-    const bandTopBottom = H * (1 - BAND_RATIO)
-    const bandBottomBottom = H
-
-    const targetCount = Math.min(Math.floor(W / 3), 2000)
-    const stride = Math.max(1, Math.floor(total / targetCount))
-    const temp = new THREE.Vector3()
-    const screenPos = new THREE.Vector3()
-
-    const vySign = direction === 'up' ? -1 : 1
-    const bandMin = direction === 'up' ? bandTop : bandTopBottom
-    const bandMax = direction === 'up' ? bandBottom : bandBottomBottom
-
-    let sampled = 0
-    for (let i = 0; i < total; i += stride) {
-      splatMesh.getSplatCenter(i, temp)
-      screenPos.copy(temp)
-      screenPos.project(camera)
-
-      const screenY = (-screenPos.y * 0.5 + 0.5) * H
-      if (screenY < bandMin || screenY >= bandMax) continue
-
-      const screenX = (screenPos.x * 0.5 + 0.5) * W
-      if (screenX < 0 || screenX >= W) continue
-
-      const depth = screenPos.z
-      if (depth > 1 || depth < -1) continue
-
-      const brightness = Math.max(0.3, 1 - Math.abs(depth))
-      const size = 1.2 + Math.random() * 2.5 + (1 - brightness) * 1.5
-
-      this.particles.push({
-        x: screenX + (Math.random() - 0.5) * JITTER_AMOUNT,
-        y: screenY + (Math.random() - 0.5) * JITTER_AMOUNT,
-        vx: (Math.random() - 0.5) * VX_SPREAD * 2,
-        vy: (Math.random() * 0.4 + 0.6) * VY_BASE * vySign,
-        r: Math.floor(200 + Math.random() * 55),
-        g: Math.floor(200 + Math.random() * 55),
-        b: Math.floor(200 + Math.random() * 55),
-        a: 0.7 + Math.random() * 0.3,
-        size,
-      })
-      sampled++
-    }
-
-    return sampled > 50
-  }
-
   private captureAndSample(source: HTMLCanvasElement): void {
     const w = source.width
     const h = source.height
     if (w < 4 || h < 4) return
 
-    const bandH = Math.max(4, Math.floor(h * BAND_RATIO))
-    const sy = this.direction === 'up' ? 0 : h - bandH
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    const W = window.innerWidth
+    const H = window.innerHeight
 
     const off = document.createElement('canvas')
     off.width = w
-    off.height = bandH
+    off.height = h
     const offCtx = off.getContext('2d', { alpha: true, willReadFrequently: true })
     if (!offCtx) return
 
     try {
-      offCtx.drawImage(source, 0, sy, w, bandH, 0, 0, w, bandH)
+      offCtx.drawImage(source, 0, 0, w, h, 0, 0, w, h)
     } catch {
+      this.initFallback(off, w, h)
       return
     }
 
     let data: ImageData
     try {
-      data = offCtx.getImageData(0, 0, w, bandH)
+      data = offCtx.getImageData(0, 0, w, h)
     } catch {
-      this.initFallback(off, bandH)
+      this.initFallback(off, w, h)
       return
     }
 
     const { data: d } = data
-    const W = window.innerWidth
-    const H = window.innerHeight
-    const bandHScreen = H * BAND_RATIO
-    const baseY = this.direction === 'up' ? 0 : H - bandHScreen
     const vySign = this.direction === 'up' ? -1 : 1
 
+    const targetParticleCount = Math.max(
+      MIN_PARTICLES,
+      Math.min(MAX_PARTICLES, Math.floor((W * H) / 400))
+    )
+
+    const totalPixels = w * h
+    const pixelsPerParticle = totalPixels / targetParticleCount
+    const stride = Math.max(1, Math.floor(Math.sqrt(pixelsPerParticle)))
+
     let sampled = 0
-    for (let py = 0; py < bandH; py += SAMPLE_STRIDE) {
-      for (let px = 0; px < w; px += SAMPLE_STRIDE) {
+    for (let py = 0; py < h; py += stride) {
+      for (let px = 0; px < w; px += stride) {
         const i = (py * w + px) << 2
         const r = d[i]
         const g = d[i + 1]
@@ -223,7 +165,7 @@ export class SplatTransitionOverlay {
         if (a < ALPHA_THRESHOLD) continue
 
         const x = (px / w) * W
-        const y = baseY + (py / bandH) * bandHScreen
+        const y = (py / h) * H
         const brightness = (r + g + b) / (3 * 255)
         const size = 1.2 + Math.random() * 2.3 + (1 - brightness) * 1.2
 
@@ -239,27 +181,46 @@ export class SplatTransitionOverlay {
           size,
         })
         sampled++
+
+        if (sampled >= MAX_PARTICLES) break
       }
+      if (sampled >= MAX_PARTICLES) break
     }
 
-    if (sampled < 20) {
+    this.debugInfo = {
+      mode: 'pixelSnapshot',
+      particleCount: sampled,
+      dpr,
+      snapshotWidth: w,
+      snapshotHeight: h,
+    }
+
+    if (sampled < 50) {
       this.particles = []
-      this.initFallback(off, bandH)
+      this.initFallback(off, w, h)
     }
   }
 
-  private initFallback(bandCanvas: HTMLCanvasElement, bandH: number): void {
+  private initFallback(fullCanvas: HTMLCanvasElement, w: number, h: number): void {
     this.isFallback = true
     const W = window.innerWidth
     const H = window.innerHeight
-    const bandHScreen = H * BAND_RATIO
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
     const f = document.createElement('canvas')
     f.width = W
-    f.height = bandHScreen
+    f.height = H
     const fc = f.getContext('2d', { alpha: true })
     if (!fc) return
-    fc.drawImage(bandCanvas, 0, 0, bandCanvas.width, bandH, 0, 0, W, bandHScreen)
+    fc.drawImage(fullCanvas, 0, 0, w, h, 0, 0, W, H)
     this.fallbackImage = f
+
+    this.debugInfo = {
+      mode: 'fallback',
+      particleCount: 0,
+      dpr,
+      snapshotWidth: w,
+      snapshotHeight: h,
+    }
   }
 
   private easeInOutCubic(t: number): number {
@@ -285,19 +246,24 @@ export class SplatTransitionOverlay {
     const eased = this.easeInOutCubic(t)
     const fade = 1 - eased
 
-    if (DEBUG_SHOW_BAND_REGION) {
-      const bandH = H * BAND_RATIO
-      const y = this.direction === 'up' ? 0 : H - bandH
-      this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)'
-      this.ctx.lineWidth = 2
-      this.ctx.strokeRect(0, y, W, bandH)
+    if (DEBUG_SHOW_INFO && this.debugInfo) {
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+      this.ctx.fillRect(10, 10, 300, 100)
+      this.ctx.fillStyle = '#fff'
+      this.ctx.font = '12px monospace'
+      this.ctx.fillText(`mode: ${this.debugInfo.mode}`, 15, 30)
+      this.ctx.fillText(`particles: ${this.debugInfo.particleCount}`, 15, 50)
+      this.ctx.fillText(`DPR: ${this.debugInfo.dpr}`, 15, 70)
+      this.ctx.fillText(
+        `snapshot: ${this.debugInfo.snapshotWidth}x${this.debugInfo.snapshotHeight}`,
+        15,
+        90
+      )
     }
 
     if (this.isFallback && this.fallbackImage) {
-      const bandH = this.fallbackImage.height
-      const y = this.direction === 'up' ? 0 : H - bandH
       this.ctx.globalAlpha = this.overlayOpacity * fade
-      this.ctx.drawImage(this.fallbackImage, 0, 0, W, bandH, 0, y, W, bandH)
+      this.ctx.drawImage(this.fallbackImage, 0, 0, W, H, 0, 0, W, H)
       this.ctx.globalAlpha = 1
     } else {
       const jitterDecay = Math.pow(JITTER_DECAY, elapsed / 16.67)
@@ -353,6 +319,7 @@ export class SplatTransitionOverlay {
     }
     this.particles = []
     this.fallbackImage = null
+    this.debugInfo = null
     if (this.overlay) {
       this.overlay.style.opacity = '0'
       this.overlay.style.transition = ''
