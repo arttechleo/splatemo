@@ -4,6 +4,7 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { AnnotationManager, type Annotation } from './annotations/AnnotationManager'
 import { ParticleDisintegration } from './transitions/ParticleDisintegration'
 import { createOverlay } from './ui/overlay'
+import { createOrbitController } from './controls/orbitControls'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) {
@@ -34,6 +35,9 @@ app.appendChild(overlay)
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
 const ENABLE_VIEW_DEPENDENT_LOADING = false
+const DEBUG_CONTROLS = true
+const orbitTarget = new THREE.Vector3(0, 0, 0)
+let orbitController: ReturnType<typeof createOrbitController> | null = null
 
 const threeScene = new THREE.Scene()
 
@@ -45,7 +49,7 @@ const viewer = new GaussianSplats3D.Viewer({
   initialCameraLookAt: [0, 0, 0],
   sharedMemoryForWorkers: false,
   gpuAcceleratedSort: false,
-  useBuiltInControls: true,
+  useBuiltInControls: false,
   renderMode: GaussianSplats3D.RenderMode.OnChange,
   sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
   sphericalHarmonicsDegree: isMobile ? 0 : 1,
@@ -198,40 +202,28 @@ const loadSplat = async (index: number) => {
 }
 
 const setupOrbitControls = () => {
-  if (!viewer.controls) return
-  const controls = viewer.controls as unknown as {
-    enableZoom: boolean
-    enablePan: boolean
-    enableRotate: boolean
-    enableDamping: boolean
-    dampingFactor: number
-    addEventListener: (event: string, callback: () => void) => void
-    target: THREE.Vector3
-  }
-  controls.enableDamping = true
-  controls.dampingFactor = 0.08
-  viewer.controls.enableZoom = false
-  viewer.controls.enablePan = false
-  viewer.controls.enableRotate = true
-  controls.addEventListener('change', () => {
-    const camera = viewer.camera
-    if (!camera) return
-    const pos = camera.position
-    console.log('Orbit change', pos.x, pos.y, pos.z, 'target', controls.target.toArray())
+  if (!viewer.camera || !viewer.renderer) return
+  orbitController = createOrbitController({
+    camera: viewer.camera,
+    domElement: viewer.renderer.domElement,
+    target: orbitTarget,
+    options: {
+      rotateSpeed: 0.005,
+      damping: 0,
+      allowLeftButton: true,
+      debug: DEBUG_CONTROLS,
+    },
   })
 }
 
 const setupPoseSnapping = () => {
   const camera = viewer.camera
-  const controls = viewer.controls as
-    | (THREE.EventDispatcher & { enabled: boolean; target: THREE.Vector3 })
-    | undefined
-  if (!camera || !controls) return
+  if (!camera || !orbitController) return
 
   const snapToPose = (pose: NonNullable<SplatEntry['cameraPoses']>[number]) => {
     if (isSnapping) return
     isSnapping = true
-    controls.enabled = false
+    orbitController?.setEnabled(false)
 
     console.log('Snap start', {
       targetPose: pose,
@@ -239,7 +231,7 @@ const setupPoseSnapping = () => {
     })
 
     const startPos = camera.position.clone()
-    const startTarget = controls.target.clone()
+    const startTarget = orbitTarget.clone()
     const endPos = new THREE.Vector3(...pose.position)
     const endTarget = new THREE.Vector3(...pose.target)
     const startTime = performance.now()
@@ -249,16 +241,19 @@ const setupPoseSnapping = () => {
       const t = Math.min(1, (time - startTime) / duration)
       const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
       camera.position.lerpVectors(startPos, endPos, eased)
-      controls.target.lerpVectors(startTarget, endTarget, eased)
+      orbitTarget.lerpVectors(startTarget, endTarget, eased)
+      camera.lookAt(orbitTarget)
       console.log('Snap progress', Math.round(eased * 100))
       if (t < 1) {
         requestAnimationFrame(animate)
       } else {
-        controls.enabled = true
+        orbitController?.setTarget(orbitTarget)
+        orbitController?.setRadius(camera.position.distanceTo(orbitTarget))
+        orbitController?.setEnabled(true)
         isSnapping = false
         console.log('Snap end', {
           newPosition: camera.position.toArray(),
-          orbitEnabled: controls.enabled,
+          orbitEnabled: true,
         })
       }
     }
@@ -285,36 +280,6 @@ const setupPoseSnapping = () => {
 
   viewerRoot.addEventListener('dblclick', () => {
     handleSnap()
-  })
-}
-
-const setupPointerDebug = () => {
-  const logPointer = (event: PointerEvent, phase: string) => {
-    console.log(`Pointer ${phase}`, event.pointerId, event.pointerType)
-  }
-
-  viewerRoot.addEventListener('pointerdown', (event) => {
-    logPointer(event, 'down')
-    try {
-      viewerRoot.setPointerCapture(event.pointerId)
-    } catch (error) {
-      console.warn('setPointerCapture failed', event.pointerId, error)
-    }
-  })
-
-  viewerRoot.addEventListener('pointermove', (event) => {
-    logPointer(event, 'move')
-  })
-
-  viewerRoot.addEventListener('pointerup', (event) => {
-    logPointer(event, 'up')
-    try {
-      if (viewerRoot.hasPointerCapture(event.pointerId)) {
-        viewerRoot.releasePointerCapture(event.pointerId)
-      }
-    } catch (error) {
-      console.warn('releasePointerCapture failed', event.pointerId, error)
-    }
   })
 }
 
@@ -435,7 +400,6 @@ const start = async () => {
   splatEntries = await loadManifest()
   await loadSplat(0)
   currentPoses = splatEntries[0]?.cameraPoses
-  setupPointerDebug()
   setupOrbitControls()
   setupPoseSnapping()
   setupSplatNavigation()
@@ -443,17 +407,22 @@ const start = async () => {
   const camera = viewer.camera
   if (camera) {
     console.log('Camera position', camera.position.toArray())
-    const target = (viewer.controls as unknown as { target?: THREE.Vector3 })?.target
-    if (target) {
-      camera.lookAt(target)
-      console.log('Camera target', target.toArray())
-    }
+    camera.lookAt(orbitTarget)
+    console.log('Camera target', orbitTarget.toArray())
   }
   const animate = (time: number) => {
     if (viewer.camera) {
       annotationManager.update(viewer.camera)
     }
     particleSystem.update(time)
+    if (orbitController) {
+      if (viewer.renderer?.xr?.isPresenting) {
+        orbitController.setEnabled(false)
+      } else {
+        orbitController.setEnabled(true)
+        orbitController.update(1 / 60)
+      }
+    }
     requestAnimationFrame(animate)
   }
   requestAnimationFrame(animate)
@@ -483,9 +452,8 @@ const assertSplatVisibility = (stage: string) => {
     console.error(`[${stage}] Splat material opacity is zero.`)
   }
   const camera = viewer.camera
-  const target = (viewer.controls as unknown as { target?: THREE.Vector3 })?.target
-  if (camera && target) {
-    const toTarget = target.clone().sub(camera.position)
+  if (camera) {
+    const toTarget = orbitTarget.clone().sub(camera.position)
     if (toTarget.length() < 0.01) {
       console.error(`[${stage}] Camera target equals camera position.`)
     } else {
