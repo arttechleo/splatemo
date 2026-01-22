@@ -1,9 +1,17 @@
 [
   {
-    "id": "isetta",
-    "name": "Isetta Car",
-    "file": "gs_Isetta_Car.ply",
-    "poster": null,
-    "poses": null
+    "id": "girlsonbikes",
+    "name": "Girlsonbikes",
+    "file": "girlsonbikes.ply"
+  },
+  {
+    "id": "gs_Isetta_Car",
+    "name": "Gs Isetta Car",
+    "file": "gs_Isetta_Car.ply"
+  },
+  {
+    "id": "windowsxpWallpaper",
+    "name": "Windowsxp Wallpaper",
+    "file": "windowsxpWallpaper.ply"
   }
 ]

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "generate:manifest": "node scripts/generate-manifest.cjs"
   },
   "devDependencies": {
     "@types/three": "^0.182.0",

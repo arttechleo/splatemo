@@ -11,7 +11,7 @@ viewerRoot.id = 'viewer'
 app.appendChild(viewerRoot)
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-const splatUrl = '/splats/gs_Isetta_Car.ply'
+const manifestUrl = '/splats/manifest.json'
 
 const viewer = new GaussianSplats3D.Viewer({
   rootElement: viewerRoot,
@@ -56,43 +56,121 @@ viewer.onSplatMeshChanged((splatMesh: { material?: { depthWrite: boolean } }) =>
   }
 })
 
-const logSplatHead = async () => {
+type SplatEntry = {
+  id: string
+  name?: string
+  file: string
+}
+
+const splatCache = new Map<string, string>()
+let splatEntries: SplatEntry[] = []
+let currentIndex = 0
+let hasScene = false
+let isLoading = false
+
+const logSplatHead = async (url: string) => {
   try {
-    const headResponse = await fetch(splatUrl, { method: 'HEAD' })
-    console.log('PLY HEAD status', headResponse.status)
+    const headResponse = await fetch(url, { method: 'HEAD' })
+    console.log('PLY HEAD status', url, headResponse.status)
     const length = headResponse.headers.get('content-length')
-    console.log('PLY content-length', length)
+    console.log('PLY content-length', url, length)
   } catch (error) {
-    console.warn('PLY HEAD failed', error)
+    console.warn('PLY HEAD failed', url, error)
   }
 }
 
-const start = async () => {
-  await logSplatHead()
-  return viewer.addSplatScene(splatUrl, {
+const loadManifest = async () => {
+  const response = await fetch(manifestUrl, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error(`Manifest fetch failed: ${response.status}`)
+  }
+  const data = (await response.json()) as SplatEntry[]
+  console.log('Manifest entries', data.length)
+  return data
+}
+
+const prefetchSplat = async (entry: SplatEntry) => {
+  if (splatCache.has(entry.id)) return
+  const url = `/splats/${entry.file}`
+  await logSplatHead(url)
+  const response = await fetch(url)
+  if (!response.ok) {
+    console.warn('Prefetch failed', url, response.status)
+    return
+  }
+  const blob = await response.blob()
+  console.log('Prefetch size', url, blob.size)
+  const objectUrl = URL.createObjectURL(blob)
+  splatCache.set(entry.id, objectUrl)
+}
+
+const loadSplat = async (index: number) => {
+  if (isLoading) return
+  const entry = splatEntries[index]
+  if (!entry) return
+  isLoading = true
+
+  const url = `/splats/${entry.file}`
+  await logSplatHead(url)
+
+  if (hasScene) {
+    await viewer.removeSplatScene(0, false)
+  }
+
+  const sourceUrl = splatCache.get(entry.id) ?? url
+  await viewer.addSplatScene(sourceUrl, {
     showLoadingUI: true,
     progressiveLoad: true,
     splatAlphaRemovalThreshold: 5,
     rotation: [1, 0, 0, 0],
     onProgress: (percent: number) => {
-      console.log('Splat load progress', percent)
+      console.log('Splat load progress', entry.id, percent)
     },
   })
+
+  if (sourceUrl !== url) {
+    URL.revokeObjectURL(sourceUrl)
+    splatCache.delete(entry.id)
+  }
+
+  currentIndex = index
+  hasScene = true
+  isLoading = false
+
+  const nextIndex = (currentIndex + 1) % splatEntries.length
+  if (splatEntries[nextIndex]) {
+    void prefetchSplat(splatEntries[nextIndex])
+  }
 }
 
-start()
-  .then(() => {
-    if (viewer.controls) {
-      viewer.controls.enableZoom = false
-      viewer.controls.enablePan = false
-      viewer.controls.enableRotate = true
-    }
-    viewer.start()
-    const camera = viewer.camera
-    if (camera) {
-      console.log('Camera position', camera.position.toArray())
-    }
-  })
-  .catch((error: unknown) => {
-    console.error('Failed to load splat scene', error)
-  })
+const setupOrbitControls = () => {
+  if (!viewer.controls) return
+  viewer.controls.enableZoom = false
+  viewer.controls.enablePan = false
+  viewer.controls.enableRotate = true
+}
+
+const setupPoseSnapping = () => {
+  // placeholder for future camera pose snapping
+}
+
+const setupSplatNavigation = () => {
+  // placeholder for future scroll/swipe transitions
+}
+
+const start = async () => {
+  splatEntries = await loadManifest()
+  await loadSplat(0)
+  setupOrbitControls()
+  setupPoseSnapping()
+  setupSplatNavigation()
+  viewer.start()
+  const camera = viewer.camera
+  if (camera) {
+    console.log('Camera position', camera.position.toArray())
+  }
+}
+
+start().catch((error: unknown) => {
+  console.error('Failed to load splat scene', error)
+})
