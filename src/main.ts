@@ -27,9 +27,21 @@ if (!app) {
   throw new Error('App root not found')
 }
 
+const splatLayer = document.createElement('div')
+splatLayer.id = 'splat-layer'
+app.appendChild(splatLayer)
+
+const particleCanvas = document.createElement('canvas')
+particleCanvas.id = 'particle-layer'
+app.appendChild(particleCanvas)
+
+const uiLayer = document.createElement('div')
+uiLayer.id = 'ui-layer'
+app.appendChild(uiLayer)
+
 const viewerRoot = document.createElement('div')
 viewerRoot.id = 'viewer'
-app.appendChild(viewerRoot)
+splatLayer.appendChild(viewerRoot)
 
 const poster = document.createElement('div')
 poster.className = 'poster'
@@ -39,23 +51,23 @@ poster.innerHTML = `
     <p class="poster__status">2D preview ready</p>
   </div>
 `
-app.appendChild(poster)
+uiLayer.appendChild(poster)
 
 const annotationsRoot = document.createElement('div')
 annotationsRoot.className = 'annotations'
-app.appendChild(annotationsRoot)
+uiLayer.appendChild(annotationsRoot)
 
 const poseChips = document.createElement('div')
 poseChips.className = 'pose-chips'
-app.appendChild(poseChips)
+uiLayer.appendChild(poseChips)
 
 const hint = document.createElement('div')
 hint.className = 'feed-hint'
 hint.textContent = 'Swipe to next'
-app.appendChild(hint)
+uiLayer.appendChild(hint)
 
 const overlayApi = createOverlay()
-app.appendChild(overlayApi.element)
+uiLayer.appendChild(overlayApi.element)
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
@@ -90,10 +102,19 @@ if (viewer.renderer) {
     event.preventDefault()
     console.error('WebGL context lost')
   })
+  const canvas = viewer.renderer.domElement
+  const styles = window.getComputedStyle(canvas)
+  console.log('Splat canvas', canvas)
+  console.log('Splat canvas styles', {
+    display: styles.display,
+    visibility: styles.visibility,
+    opacity: styles.opacity,
+    zIndex: styles.zIndex,
+  })
 }
 
 const annotationManager = new AnnotationManager(annotationsRoot)
-const particleOverlay = createParticleOverlay(app)
+const particleOverlay = createParticleOverlay(particleCanvas)
 
 let manifest: Manifest | null = null
 let currentIndex = 0
@@ -408,4 +429,17 @@ const start = async () => {
 
 start().catch((error: unknown) => {
   console.error('Failed to start app', error)
+})
+
+window.addEventListener('keydown', (event) => {
+  if (event.key.toLowerCase() === 'o') {
+    const next = particleCanvas.style.display === 'none' ? '' : 'none'
+    particleCanvas.style.display = next
+    console.log('Particle overlay', next === '' ? 'shown' : 'hidden')
+  }
+  if (event.key.toLowerCase() === 'u') {
+    const next = uiLayer.style.display === 'none' ? '' : 'none'
+    uiLayer.style.display = next
+    console.log('UI layer', next === '' ? 'shown' : 'hidden')
+  }
 })

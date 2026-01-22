@@ -8,15 +8,15 @@ const createSeededRandom = (seed: number) => {
   }
 }
 
-export const createParticleOverlay = (container: HTMLElement) => {
+export const createParticleOverlay = (canvas: HTMLCanvasElement) => {
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
   camera.position.set(0, 0, 6)
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false })
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
-  renderer.setSize(container.clientWidth, container.clientHeight)
+  renderer.setClearColor(0x000000, 0)
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight)
   renderer.domElement.className = 'particle-layer'
-  container.appendChild(renderer.domElement)
 
   let points: THREE.Points | null = null
   let velocities: Float32Array | null = null
@@ -25,7 +25,7 @@ export const createParticleOverlay = (container: HTMLElement) => {
   let resolveDone: (() => void) | null = null
 
   const resize = () => {
-    const { clientWidth, clientHeight } = container
+    const { clientWidth, clientHeight } = canvas
     camera.aspect = clientWidth / clientHeight
     camera.updateProjectionMatrix()
     renderer.setSize(clientWidth, clientHeight)
@@ -85,6 +85,8 @@ export const createParticleOverlay = (container: HTMLElement) => {
     const material = points.material as THREE.PointsMaterial
     material.opacity = 0.8 * (1 - eased)
     material.size = 0.03 * (1 + eased * 0.6)
+    renderer.setClearColor(0x000000, 0)
+    renderer.clear(true, true, true)
     renderer.render(scene, camera)
     if (t >= 1) {
       stop()
