@@ -33,6 +33,10 @@ app.appendChild(overlay)
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
+const experiments = {
+  progressiveRefinement: true,
+  viewDependentPrioritization: false,
+}
 
 const threeScene = new THREE.Scene()
 
@@ -115,6 +119,12 @@ let isLoading = false
 let isTransitioning = false
 let currentPoses: SplatEntry['cameraPoses'] = undefined
 let isSnapping = false
+let isOrbiting = false
+let lastOrbitSample = performance.now()
+let lastOrbitAngle = 0
+let lastFrameTime = performance.now()
+let loadStartTime = 0
+let firstFrameReady = false
 
 const logSplatHead = async (url: string) => {
   try {
@@ -157,6 +167,8 @@ const loadSplat = async (index: number) => {
   const entry = splatEntries[index]
   if (!entry) return
   isLoading = true
+  loadStartTime = performance.now()
+  firstFrameReady = false
   showPoster('2D preview ready')
 
   const url = `/splats/${entry.file}`
@@ -204,12 +216,27 @@ const setupOrbitControls = () => {
     dampingFactor: number
     addEventListener: (event: string, callback: () => void) => void
     target: THREE.Vector3
+    mouseButtons?: Record<string, number>
   }
-  controls.enableDamping = true
-  controls.dampingFactor = 0.08
+  controls.enableDamping = false
+  controls.dampingFactor = 0
   viewer.controls.enableZoom = false
   viewer.controls.enablePan = false
   viewer.controls.enableRotate = true
+  if (controls.mouseButtons) {
+    controls.mouseButtons.LEFT = THREE.MOUSE.PAN
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY
+    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE
+  }
+  controls.addEventListener('start', () => {
+    isOrbiting = true
+    console.log('Orbit start')
+  })
+  controls.addEventListener('end', () => {
+    isOrbiting = false
+    console.log('Orbit stop')
+    restoreHighQuality()
+  })
   controls.addEventListener('change', () => {
     const camera = viewer.camera
     if (!camera) return
@@ -287,13 +314,14 @@ const setupPoseSnapping = () => {
 
 const setupPointerDebug = () => {
   const logPointer = (event: PointerEvent, phase: string) => {
-    console.log(`Pointer ${phase}`, event.pointerId, event.pointerType)
+    console.log(`Pointer ${phase}`, event.pointerId, event.pointerType, event.button)
   }
 
   viewerRoot.addEventListener('pointerdown', (event) => {
     logPointer(event, 'down')
     try {
       viewerRoot.setPointerCapture(event.pointerId)
+      console.log('Pointer capture set', event.pointerId)
     } catch (error) {
       console.warn('setPointerCapture failed', event.pointerId, error)
     }
@@ -308,10 +336,35 @@ const setupPointerDebug = () => {
     try {
       if (viewerRoot.hasPointerCapture(event.pointerId)) {
         viewerRoot.releasePointerCapture(event.pointerId)
+        console.log('Pointer capture released', event.pointerId)
       }
     } catch (error) {
       console.warn('releasePointerCapture failed', event.pointerId, error)
     }
+    isOrbiting = false
+  })
+
+  viewerRoot.addEventListener('pointercancel', (event) => {
+    logPointer(event, 'cancel')
+    try {
+      if (viewerRoot.hasPointerCapture(event.pointerId)) {
+        viewerRoot.releasePointerCapture(event.pointerId)
+        console.log('Pointer capture released', event.pointerId)
+      }
+    } catch (error) {
+      console.warn('releasePointerCapture failed', event.pointerId, error)
+    }
+    isOrbiting = false
+  })
+
+  viewerRoot.addEventListener('mouseleave', () => {
+    console.log('Pointer leave')
+    isOrbiting = false
+  })
+
+  window.addEventListener('blur', () => {
+    console.log('Window blur - orbit stop')
+    isOrbiting = false
   })
 }
 
@@ -334,6 +387,10 @@ const startRevealTransition = () => {
     } else {
       poster.classList.add('poster--hidden')
       poster.style.opacity = ''
+      if (!firstFrameReady) {
+        firstFrameReady = true
+        console.log('First frame ready', Math.round(performance.now() - loadStartTime), 'ms')
+      }
     }
   }
   requestAnimationFrame(tick)
@@ -446,10 +503,13 @@ const start = async () => {
     }
   }
   const animate = (time: number) => {
+    const delta = time - lastFrameTime
+    lastFrameTime = time
     if (viewer.camera) {
       annotationManager.update(viewer.camera)
     }
     particleSystem.update(time)
+    handleOrbitQuality(time, delta)
     requestAnimationFrame(animate)
   }
   requestAnimationFrame(animate)
@@ -458,3 +518,59 @@ const start = async () => {
 start().catch((error: unknown) => {
   console.error('Failed to load splat scene', error)
 })
+
+const lowQuality = {
+  pixelRatio: 1,
+  kernel2DSize: 0.16,
+  shDegree: 0,
+}
+
+const highQuality = {
+  pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+  kernel2DSize: isMobile ? 0.18 : 0.24,
+  shDegree: isMobile ? 0 : 1,
+}
+
+const applyQuality = (quality: typeof highQuality) => {
+  if (viewer.renderer) {
+    viewer.renderer.setPixelRatio(quality.pixelRatio)
+  }
+  const mesh = (viewer as unknown as { splatMesh?: { kernel2DSize?: number } }).splatMesh
+  if (mesh && typeof mesh.kernel2DSize === 'number') {
+    mesh.kernel2DSize = quality.kernel2DSize
+  }
+  const setSH = (viewer as unknown as { setActiveSphericalHarmonicsDegrees?: (value: number) => void })
+    .setActiveSphericalHarmonicsDegrees
+  setSH?.(quality.shDegree)
+}
+
+const restoreHighQuality = () => {
+  if (!experiments.progressiveRefinement) return
+  applyQuality(highQuality)
+  console.log('Quality level', 'idle')
+}
+
+const handleOrbitQuality = (time: number, delta: number) => {
+  if (!experiments.progressiveRefinement) return
+  if (isOrbiting) {
+    applyQuality(lowQuality)
+    console.log('Quality level', 'moving')
+  }
+
+  if (!viewer.camera || !viewer.controls) return
+  if (time - lastOrbitSample < 60) return
+  lastOrbitSample = time
+  const target = (viewer.controls as unknown as { target?: THREE.Vector3 })?.target
+  if (!target) return
+  const vector = viewer.camera.position.clone().sub(target).normalize()
+  const angle = Math.atan2(vector.x, vector.z)
+  const velocity = Math.abs(angle - lastOrbitAngle) / Math.max(delta, 1)
+  lastOrbitAngle = angle
+  if (isOrbiting) {
+    console.log('Camera rotation delta', velocity.toFixed(4))
+  }
+  if (experiments.viewDependentPrioritization) {
+    console.log('View-dependent loading not supported in runtime; requires preprocessing')
+    experiments.viewDependentPrioritization = false
+  }
+}
