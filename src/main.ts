@@ -100,6 +100,8 @@ let activePointerId: number | null = null
 let currentSplatCenter = new THREE.Vector3(0, 0, 0)
 let debugMarker: THREE.Object3D | null = null
 let autoframeTimers: number[] = []
+let engineReadyPromise: Promise<void> = Promise.resolve()
+let resolveEngineReady: (() => void) | null = null
 
 const logSplatHead = async (url: string) => {
   try {
@@ -424,6 +426,9 @@ const loadSplat = async (entry: ManifestSplat) => {
   if (isLoading) return
   isLoading = true
   clearAutoframeRetries()
+  engineReadyPromise = new Promise<void>((resolve) => {
+    resolveEngineReady = resolve
+  })
   const statusEl = poster.querySelector<HTMLParagraphElement>('.poster__status')
   if (statusEl) statusEl.textContent = 'Loading 0%'
   poster.classList.remove('poster--hidden')
@@ -474,6 +479,8 @@ const loadSplat = async (entry: ManifestSplat) => {
   const settleMs = t100 ? Math.round(performance.now() - t100) : 0
   console.log('SPLAT READY', entry.file, `+${settleMs}ms`)
   frameCameraToSplat()
+  resolveEngineReady?.()
+  resolveEngineReady = null
 
   setOverlay(entry)
   setAnnotations(entry)
@@ -695,6 +702,7 @@ const start = async () => {
     },
     debug: debugMode,
     minIdleMs: MIN_IDLE_DWELL_MS,
+    waitForReady: () => engineReadyPromise,
   })
 
   await loadSplat(entries[0])

@@ -11,6 +11,7 @@ export const createFeedController = ({
   onTransitionIn,
   debug = false,
   minIdleMs = 0,
+  waitForReady,
 }: {
   entries: FeedEntry[]
   onTransitionOut: (direction: 'next' | 'prev') => Promise<void>
@@ -18,6 +19,7 @@ export const createFeedController = ({
   onTransitionIn: () => Promise<void>
   debug?: boolean
   minIdleMs?: number
+  waitForReady?: () => Promise<void>
 }) => {
   let currentIndex = 0
   let state: FeedState = 'IDLE'
@@ -88,6 +90,9 @@ export const createFeedController = ({
 
     const nextEntry = entries[targetIndex]
     await onLoad(nextEntry)
+    if (waitForReady) {
+      await waitForReady()
+    }
     currentIndex = targetIndex
 
     state = 'TRANSITION_IN'
