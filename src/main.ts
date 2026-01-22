@@ -96,11 +96,13 @@ const start = async () => {
     const dt = (time - last) / 1000
     last = time
     engine.tick(dt)
-    controls?.update(dt)
-    if (ENABLE_PARTICLE_TRANSITIONS) {
-      transitions.update()
+    if (engine.state === 'READY') {
+      controls?.update(dt)
+      if (ENABLE_PARTICLE_TRANSITIONS) {
+        transitions.update()
+      }
+      annotations.update()
     }
-    annotations.update()
     requestAnimationFrame(tick)
   }
   requestAnimationFrame(tick)

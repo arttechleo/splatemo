@@ -16,6 +16,11 @@ type ManifestEntry = {
 }
 
 type Callback<T> = (value: T) => void
+type SplatMeshRef = {
+  parent?: unknown
+  visible?: boolean
+  material?: { opacity?: number; depthWrite?: boolean }
+}
 
 const QUALITY: Record<QualityProfile, { pixelRatio: number; kernel2DSize: number; shDegree: number }> =
   {
@@ -32,9 +37,8 @@ export class SplatEngine {
   private manifest: ManifestEntry[] = []
   private currentEntryId: string | null = null
   private target = new THREE.Vector3(0, 0, 0)
-  private splatMesh:
-    | { parent?: unknown; visible?: boolean; material?: { opacity?: number; depthWrite?: boolean } }
-    | null = null
+  private splatMesh: SplatMeshRef | null = null
+  private splatResolveStart = 0
   private onProgressCbs: Callback<number>[] = []
   private onReadyCbs: Array<() => void> = []
   private onErrorCbs: Callback<unknown>[] = []
@@ -114,6 +118,12 @@ export class SplatEngine {
       },
     })
     this.currentEntryId = entryId
+    this.splatResolveStart = performance.now()
+    await this.waitForSplatObject()
+    if (!this.splatMesh) {
+      this.emitError(new Error('Splat object missing after load.'))
+      return
+    }
     this.state = 'READY'
     this.assertInvariants('loadSplat')
   }
@@ -193,8 +203,8 @@ export class SplatEngine {
     if (!this.viewer) return
     const update = (this.viewer as unknown as { update?: () => void }).update
     const render = (this.viewer as unknown as { render?: () => void }).render
-    update?.()
-    render?.()
+    update?.call(this.viewer)
+    render?.call(this.viewer)
     if (this.state === 'READY') {
       this.assertInvariants('tick')
     }
@@ -214,10 +224,16 @@ export class SplatEngine {
     const now = performance.now()
     if (now - this.lastInvariantLog < 500) return
     this.lastInvariantLog = now
-    const mesh = this.splatMesh
+    const mesh = this.splatMesh ?? this.resolveSplatObject()
     if (!mesh) {
-      console.error(`RENDER INVARIANT FAILED [${stage}]: splat object missing.`)
-      this.tryRecovery()
+      const elapsed = performance.now() - this.splatResolveStart
+      if (elapsed < 1500) {
+        console.warn(`RENDER INVARIANT [${stage}]: waiting for splat object...`)
+      } else {
+        console.error(`RENDER INVARIANT FAILED [${stage}]: splat object missing.`)
+        this.logDiagnostics()
+        this.tryRecovery()
+      }
       return
     }
     if (!mesh.parent) {
@@ -251,6 +267,37 @@ export class SplatEngine {
       this.scene.add(this.viewer.splatMesh)
     }
     this.setCameraPose(this.defaultPose)
+  }
+
+  private resolveSplatObject(): typeof this.splatMesh {
+    if (!this.viewer) return null
+    const viewerAny = this.viewer as { splatMesh?: SplatMeshRef }
+    if (viewerAny.splatMesh) {
+      this.splatMesh = viewerAny.splatMesh
+      return viewerAny.splatMesh
+    }
+    return null
+  }
+
+  private async waitForSplatObject(): Promise<void> {
+    const start = performance.now()
+    while (performance.now() - start < 1500) {
+      this.resolveSplatObject()
+      if (this.splatMesh) return
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  private logDiagnostics(): void {
+    const viewerAny = this.viewer as { splatMesh?: unknown; scene?: THREE.Scene }
+    const scene = this.scene
+    console.error('Diagnostics: viewer.splatMesh', viewerAny?.splatMesh)
+    console.error('Diagnostics: scene children', scene?.children?.map((child) => child.type))
+    const camera = this.getCamera()
+    if (camera) {
+      console.error('Diagnostics: camera position', camera.position.toArray())
+      console.error('Diagnostics: camera target', this.target.toArray())
+    }
   }
 
   private emitError(err: unknown): void {
