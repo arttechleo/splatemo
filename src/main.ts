@@ -723,6 +723,8 @@ const setupSplatNavigation = () => {
   // Mobile gesture handling with axis locking
   if (!isMobile) return
 
+  const DEBUG_GESTURE_MODE = false
+
   let touchStartX = 0
   let touchStartY = 0
   let touchStartTime = 0
@@ -733,6 +735,50 @@ const setupSplatNavigation = () => {
   const SWIPE_THRESHOLD = 80 // minimum distance for feed navigation
   const VELOCITY_THRESHOLD = 0.3 // pixels per ms for velocity-based swipe
 
+  // Two-finger gesture state
+  let gestureMode: 'feed' | 'camera' | null = null
+  let twoFingerTouches: Map<number, { x: number; y: number }> = new Map()
+  let initialPinchDistance = 0
+  let initialCameraDistance = 0
+  let initialOrbitAngle = 0
+  let initialOrbitPitch = 0
+  const MIN_DISTANCE = 1.5
+  const MAX_DISTANCE = 12
+  const ZOOM_SENSITIVITY = 0.01
+  const ORBIT_SENSITIVITY = 0.008
+  const PITCH_MAX = 15 * (Math.PI / 180) // 15 degrees in radians
+
+  const getDistance = (t1: Touch, t2: Touch): number => {
+    const dx = t2.clientX - t1.clientX
+    const dy = t2.clientY - t1.clientY
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  const getCenter = (t1: Touch, t2: Touch): { x: number; y: number } => {
+    return {
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2,
+    }
+  }
+
+  const getCameraDistance = (): number => {
+    const camera = viewer.camera
+    const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+    if (!camera || !controls?.target) return 6
+    return camera.position.distanceTo(controls.target)
+  }
+
+  const setCameraDistance = (distance: number): void => {
+    const camera = viewer.camera
+    const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+    if (!camera || !controls?.target) return
+
+    const clamped = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, distance))
+    const direction = camera.position.clone().sub(controls.target).normalize()
+    camera.position.copy(controls.target).add(direction.multiplyScalar(clamped))
+    camera.lookAt(controls.target)
+  }
+
   const handleTouchStart = (event: TouchEvent) => {
     // Don't interfere with HUD interactions
     const target = event.target as HTMLElement
@@ -740,7 +786,47 @@ const setupSplatNavigation = () => {
       return
     }
 
-    if (event.touches.length === 1 && activeTouchId === null) {
+    const touchCount = event.touches.length
+
+    // Two-finger gesture: enter camera mode
+    if (touchCount === 2) {
+      gestureMode = 'camera'
+      activeTouchId = null
+      gestureLock = null
+
+      const t1 = event.touches[0]
+      const t2 = event.touches[1]
+      initialPinchDistance = getDistance(t1, t2)
+      initialCameraDistance = getCameraDistance()
+      twoFingerTouches.set(t1.identifier, { x: t1.clientX, y: t1.clientY })
+      twoFingerTouches.set(t2.identifier, { x: t2.clientX, y: t2.clientY })
+
+      const camera = viewer.camera
+      const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+      if (camera && controls?.target) {
+        const offset = camera.position.clone().sub(controls.target)
+        initialOrbitAngle = Math.atan2(offset.x, offset.z)
+        const horizontalDist = Math.sqrt(offset.x * offset.x + offset.z * offset.z)
+        initialOrbitPitch = Math.atan2(offset.y, horizontalDist)
+      }
+
+      // Disable OrbitControls during two-finger gestures
+      const orbitControls = viewer.controls as unknown as { enabled?: boolean } | null
+      if (orbitControls) {
+        orbitControls.enabled = false
+      }
+
+      if (DEBUG_GESTURE_MODE) {
+        console.log('[GESTURE] Enter camera mode (2 fingers)')
+      }
+
+      event.preventDefault()
+      return
+    }
+
+    // One-finger gesture: enter feed mode (only if not already in camera mode)
+    if (touchCount === 1 && gestureMode !== 'camera' && activeTouchId === null) {
+      gestureMode = 'feed'
       const touch = event.touches[0]
       activeTouchId = touch.identifier
       touchStartX = touch.clientX
@@ -749,97 +835,219 @@ const setupSplatNavigation = () => {
       gestureLock = null
       totalDeltaY = 0
 
-      // Prevent default to stop browser scroll
+      if (DEBUG_GESTURE_MODE) {
+        console.log('[GESTURE] Enter feed mode (1 finger)')
+      }
+
       event.preventDefault()
     }
   }
 
   const handleTouchMove = (event: TouchEvent) => {
-    if (activeTouchId === null) return
+    const touchCount = event.touches.length
 
-    const touch = Array.from(event.touches).find((t) => t.identifier === activeTouchId)
-    if (!touch) return
+    // Two-finger camera gestures
+    if (touchCount === 2 && gestureMode === 'camera') {
+      event.preventDefault()
 
-    const deltaX = touch.clientX - touchStartX
-    const deltaY = touch.clientY - touchStartY
-    totalDeltaY = deltaY
+      const t1 = event.touches[0]
+      const t2 = event.touches[1]
+      const currentDistance = getDistance(t1, t2)
+      const center = getCenter(t1, t2)
 
-    // Lock axis after threshold
-    if (gestureLock === null) {
-      const absX = Math.abs(deltaX)
-      const absY = Math.abs(deltaY)
-      const distance = Math.sqrt(absX * absX + absY * absY)
+      const camera = viewer.camera
+      const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+      if (!camera || !controls?.target) return
 
-      if (distance > LOCK_THRESHOLD) {
-        gestureLock = absY > absX ? 'vertical' : 'horizontal'
+      // Pinch zoom
+      const distanceDelta = currentDistance - initialPinchDistance
+      const zoomFactor = 1 - distanceDelta * ZOOM_SENSITIVITY
+      const newDistance = initialCameraDistance * zoomFactor
+      setCameraDistance(newDistance)
+
+      // Two-finger drag orbit (yaw only for now)
+      const prevCenter = twoFingerTouches.size === 2
+        ? (() => {
+            const prevTouches = Array.from(twoFingerTouches.values())
+            return {
+              x: (prevTouches[0].x + prevTouches[1].x) / 2,
+              y: (prevTouches[0].y + prevTouches[1].y) / 2,
+            }
+          })()
+        : center
+
+      const dragX = center.x - prevCenter.x
+      const dragY = center.y - prevCenter.y
+
+      if (Math.abs(dragX) > 1 || Math.abs(dragY) > 1) {
+        const offset = camera.position.clone().sub(controls.target)
+        const horizontalDist = Math.sqrt(offset.x * offset.x + offset.z * offset.z)
+
+        // Yaw rotation
+        const yawDelta = dragX * ORBIT_SENSITIVITY
+        const newAngle = initialOrbitAngle + yawDelta
+
+        // Pitch rotation (clamped)
+        const pitchDelta = -dragY * ORBIT_SENSITIVITY * 0.5
+        const newPitch = Math.max(
+          -PITCH_MAX,
+          Math.min(PITCH_MAX, initialOrbitPitch + pitchDelta)
+        )
+
+        const x = Math.sin(newAngle) * horizontalDist
+        const z = Math.cos(newAngle) * horizontalDist
+        const y = Math.sin(newPitch) * horizontalDist
+
+        camera.position.set(
+          controls.target.x + x,
+          controls.target.y + y,
+          controls.target.z + z
+        )
+        camera.lookAt(controls.target)
       }
+
+      // Update stored touch positions
+      twoFingerTouches.set(t1.identifier, { x: t1.clientX, y: t1.clientY })
+      twoFingerTouches.set(t2.identifier, { x: t2.clientX, y: t2.clientY })
+
+      return
     }
 
-    // Handle horizontal rotation (yaw only)
-    if (gestureLock === 'horizontal') {
-      event.preventDefault()
-      const camera = viewer.camera
-      const controls = viewer.controls as unknown as {
-        enabled: boolean
-        target: THREE.Vector3
-      } | null
+    // One-finger feed gestures (only if in feed mode)
+    if (gestureMode === 'feed' && activeTouchId !== null) {
+      const touch = Array.from(event.touches).find((t) => t.identifier === activeTouchId)
+      if (!touch) return
 
-      if (camera && controls) {
-        // Rotate camera around Y axis (yaw) relative to target
-        const rotationSpeed = 0.01
-        const angle = deltaX * rotationSpeed
-        
-        // Get camera position relative to target
-        const offset = camera.position.clone().sub(controls.target)
-        
-        // Rotate offset around Y axis
-        const rotation = new THREE.Matrix4().makeRotationY(angle)
-        offset.applyMatrix4(rotation)
-        
-        // Update camera position
-        camera.position.copy(controls.target).add(offset)
-        camera.lookAt(controls.target)
-        
-        // Update touch start for smooth continuous rotation
-        touchStartX = touch.clientX
+      const deltaX = touch.clientX - touchStartX
+      const deltaY = touch.clientY - touchStartY
+      totalDeltaY = deltaY
+
+      // Lock axis after threshold
+      if (gestureLock === null) {
+        const absX = Math.abs(deltaX)
+        const absY = Math.abs(deltaY)
+        const distance = Math.sqrt(absX * absX + absY * absY)
+
+        if (distance > LOCK_THRESHOLD) {
+          gestureLock = absY > absX ? 'vertical' : 'horizontal'
+        }
       }
-    } else if (gestureLock === 'vertical') {
-      // Prevent browser scroll during vertical gesture
-      event.preventDefault()
+
+      // Handle horizontal rotation (yaw only)
+      if (gestureLock === 'horizontal') {
+        event.preventDefault()
+        const camera = viewer.camera
+        const controls = viewer.controls as unknown as {
+          enabled: boolean
+          target: THREE.Vector3
+        } | null
+
+        if (camera && controls) {
+          // Rotate camera around Y axis (yaw) relative to target
+          const rotationSpeed = 0.01
+          const angle = deltaX * rotationSpeed
+
+          // Get camera position relative to target
+          const offset = camera.position.clone().sub(controls.target)
+
+          // Rotate offset around Y axis
+          const rotation = new THREE.Matrix4().makeRotationY(angle)
+          offset.applyMatrix4(rotation)
+
+          // Update camera position
+          camera.position.copy(controls.target).add(offset)
+          camera.lookAt(controls.target)
+
+          // Update touch start for smooth continuous rotation
+          touchStartX = touch.clientX
+        }
+      } else if (gestureLock === 'vertical') {
+        // Prevent browser scroll during vertical gesture
+        event.preventDefault()
+      }
     }
   }
 
   const handleTouchEnd = (event: TouchEvent) => {
-    if (activeTouchId === null) return
+    const touchCount = event.touches.length
 
-    const touch = Array.from(event.changedTouches).find((t) => t.identifier === activeTouchId)
-    if (!touch) {
-      activeTouchId = null
-      gestureLock = null
+    // Two-finger gesture ended
+    if (gestureMode === 'camera') {
+      // Remove ended touches
+      for (let i = 0; i < event.changedTouches.length; i++) {
+        twoFingerTouches.delete(event.changedTouches[i].identifier)
+      }
+
+      // If no touches remain, exit camera mode
+      if (touchCount === 0) {
+        gestureMode = null
+        twoFingerTouches.clear()
+        // Re-enable OrbitControls
+        const orbitControls = viewer.controls as unknown as { enabled?: boolean } | null
+        if (orbitControls) {
+          orbitControls.enabled = true
+        }
+        if (DEBUG_GESTURE_MODE) {
+          console.log('[GESTURE] Exit camera mode')
+        }
+      } else if (touchCount === 1) {
+        // Transition to feed mode if only one touch remains
+        gestureMode = 'feed'
+        const remainingTouch = event.touches[0]
+        activeTouchId = remainingTouch.identifier
+        touchStartX = remainingTouch.clientX
+        touchStartY = remainingTouch.clientY
+        touchStartTime = performance.now()
+        gestureLock = null
+        totalDeltaY = 0
+        twoFingerTouches.clear()
+        if (DEBUG_GESTURE_MODE) {
+          console.log('[GESTURE] Transition to feed mode (1 finger remaining)')
+        }
+      }
       return
     }
 
-    const deltaY = totalDeltaY
-    const deltaTime = performance.now() - touchStartTime
-    const velocity = Math.abs(deltaY) / deltaTime
+    // One-finger feed gesture ended
+    if (gestureMode === 'feed' && activeTouchId !== null) {
+      const touch = Array.from(event.changedTouches).find((t) => t.identifier === activeTouchId)
+      if (!touch) {
+        activeTouchId = null
+        gestureLock = null
+        gestureMode = null
+        return
+      }
 
-    // Only trigger feed navigation if:
-    // 1. Gesture was locked to vertical, AND
-    // 2. Distance exceeds threshold OR velocity exceeds threshold
-    if (gestureLock === 'vertical' && (Math.abs(deltaY) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
-      event.preventDefault()
-      void navigateSplat(deltaY > 0 ? 'prev' : 'next', deltaY)
+      const deltaY = totalDeltaY
+      const deltaTime = performance.now() - touchStartTime
+      const velocity = Math.abs(deltaY) / deltaTime
+
+      // Only trigger feed navigation if:
+      // 1. Gesture was locked to vertical, AND
+      // 2. Distance exceeds threshold OR velocity exceeds threshold
+      if (gestureLock === 'vertical' && (Math.abs(deltaY) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
+        event.preventDefault()
+        void navigateSplat(deltaY > 0 ? 'prev' : 'next', deltaY)
+      }
+
+      activeTouchId = null
+      gestureLock = null
+      gestureMode = null
+      totalDeltaY = 0
     }
-
-    activeTouchId = null
-    gestureLock = null
-    totalDeltaY = 0
   }
 
   const handleTouchCancel = () => {
     activeTouchId = null
     gestureLock = null
+    gestureMode = null
     totalDeltaY = 0
+    twoFingerTouches.clear()
+    // Re-enable OrbitControls if we were in camera mode
+    const orbitControls = viewer.controls as unknown as { enabled?: boolean } | null
+    if (orbitControls) {
+      orbitControls.enabled = true
+    }
   }
 
   // Use non-passive listeners to prevent browser scroll

@@ -24,7 +24,7 @@ body {
 }
 
 #viewer {
-  touch-action: pan-y pan-x;
+  touch-action: none;
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
 }
