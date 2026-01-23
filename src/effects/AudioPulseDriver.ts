@@ -5,6 +5,8 @@
  * Reuses SplatTransitionOverlay's sampling approach for consistency.
  */
 
+import * as THREE from 'three'
+
 export const DEBUG_AUDIO_PULSE = false
 
 export class AudioPulseDriver {
@@ -58,6 +60,22 @@ export class AudioPulseDriver {
   // Source canvas reference
   private sourceCanvas: HTMLCanvasElement | null = null
   
+  // Camera reference for depth calculations (reserved for future depth-based filtering)
+  // @ts-expect-error - Reserved for future use
+  private _camera: THREE.PerspectiveCamera | null = null
+  // @ts-expect-error - Reserved for future use
+  private _controls: { target?: THREE.Vector3 } | null = null
+  // @ts-expect-error - Reserved for future use
+  private _currentSplatMesh: {
+    getSplatCount: () => number
+    getSplatCenter: (index: number, out: THREE.Vector3) => void
+  } | null = null
+  
+  // Depth-based wave parameters
+  private depthWavePosition = 0 // Current depth wave position (0 = near, 1 = far)
+  private readonly DEPTH_WAVE_SPEED = 0.008 // Depth position increment per frame
+  private readonly DEPTH_SLAB_THICKNESS = 0.15 // Thickness of depth slab (15% of depth range)
+  
 
   constructor(
     transitionOverlay: {
@@ -70,10 +88,28 @@ export class AudioPulseDriver {
         sourceCanvas: HTMLCanvasElement | null
       }) => void
     },
-    sourceCanvas: HTMLCanvasElement | null
+    sourceCanvas: HTMLCanvasElement | null,
+    camera: THREE.PerspectiveCamera | null = null,
+    controls: { target?: THREE.Vector3 } | null = null
   ) {
     this.transitionOverlay = transitionOverlay
     this.sourceCanvas = sourceCanvas
+    this._camera = camera
+    this._controls = controls
+  }
+
+  setCamera(camera: THREE.PerspectiveCamera | null, _controls: { target?: THREE.Vector3 } | null): void {
+    // Store for future depth-based filtering
+    void (this._camera = camera)
+    void (this._controls = _controls)
+  }
+
+  setSplatMesh(mesh: {
+    getSplatCount: () => number
+    getSplatCenter: (index: number, out: THREE.Vector3) => void
+  } | null): void {
+    // Store for future depth-based filtering
+    void (this._currentSplatMesh = mesh)
   }
 
   setSourceCanvas(canvas: HTMLCanvasElement | null): void {
@@ -249,28 +285,29 @@ export class AudioPulseDriver {
   }
 
   /**
-   * Calculate wave band positions for a continuous traveling wave.
-   * Creates multiple bands based on wavelength, with the primary band at wavePosition.
-   * Returns array of band center Y positions (normalized 0-1).
+   * Calculate depth-based wave bands.
+   * Creates screen-space bands that represent the projection of a depth slab traveling through the splat.
    */
-  private calculateWaveBands(wavePosition: number, wavelength: number): number[] {
+  private calculateDepthWaveBands(depthCenter: number, depthThickness: number, wavelength: number): number[] {
     const bands: number[] = []
     
-    // Primary band at current wave position
-    bands.push(wavePosition)
+    // For depth-based wave, we emit particles across the entire screen height
+    // but the depth slab determines which regions are most active
+    // Create multiple bands across screen to represent the depth wave projection
     
-    // Add additional bands based on wavelength (for multiple wavefronts)
-    // If wavelength is small, we can fit multiple bands
-    const numBands = Math.max(1, Math.floor(1 / wavelength))
+    // Number of bands based on wavelength
+    const numBands = Math.max(3, Math.floor(1 / wavelength))
+    const bandSpacing = 1 / numBands
     
-    for (let i = 1; i < numBands; i++) {
-      // Add bands at wavelength intervals
-      const offset = i * wavelength
-      const bandPos1 = wavePosition + offset
-      const bandPos2 = wavePosition - offset
+    for (let i = 0; i <= numBands; i++) {
+      const normalizedY = i * bandSpacing
       
-      if (bandPos1 <= 1) bands.push(bandPos1)
-      if (bandPos2 >= 0) bands.push(bandPos2)
+      // Weight bands by depth wave position (center of wave has highest intensity)
+      // This creates a traveling wave effect across the screen
+      const depthWeight = 1 - Math.abs(normalizedY - depthCenter) / depthThickness
+      if (depthWeight > 0.3) {
+        bands.push(normalizedY)
+      }
     }
     
     return bands.filter(y => y >= 0 && y <= 1)
@@ -292,20 +329,24 @@ export class AudioPulseDriver {
     const energySpeedBoost = energy * 0.008
     const currentSpeed = baseSpeed + energySpeedBoost
     
-    // Update wave position (continuous sweep)
-    this.wavePosition += this.waveDirection * currentSpeed
+    // Update depth wave position (travels through 3D depth: 0 = near, 1 = far)
+    this.depthWavePosition += this.waveDirection * (this.DEPTH_WAVE_SPEED + energySpeedBoost)
     
-    // Reverse direction at edges to ensure full coverage
-    if (this.wavePosition >= 1) {
-      this.wavePosition = 1
+    // Reverse direction at depth boundaries
+    if (this.depthWavePosition >= 1) {
+      this.depthWavePosition = 1
       this.waveDirection = -1
-    } else if (this.wavePosition <= 0) {
-      this.wavePosition = 0
+    } else if (this.depthWavePosition <= 0) {
+      this.depthWavePosition = 0
       this.waveDirection = 1
     }
     
-    // Calculate current wave band positions
-    const bandPositions = this.calculateWaveBands(this.wavePosition, wavelength)
+    // For depth-based wave, map depth wave position to screen-space bands
+    const depthSlabCenter = this.depthWavePosition
+    const depthSlabThickness = this.DEPTH_SLAB_THICKNESS
+    
+    // Calculate screen-space projection of depth slab
+    const bandPositions = this.calculateDepthWaveBands(depthSlabCenter, depthSlabThickness, wavelength)
     const bandHeight = H * this.BAND_THICKNESS_RATIO
     
     // Get snapshot for particle sampling

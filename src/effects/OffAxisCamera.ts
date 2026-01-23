@@ -6,8 +6,11 @@
 
 import * as THREE from 'three'
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
+import { GyroParallax } from './GyroParallax'
 
 export const DEBUG_OFF_AXIS = false
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 
 export class OffAxisCamera {
   private camera: THREE.PerspectiveCamera | null = null
@@ -25,6 +28,7 @@ export class OffAxisCamera {
   private trackingFps = 0
   private lastFpsUpdate = 0
   private frameCount = 0
+  private gyroParallax: GyroParallax | null = null
   
   // Smoothing parameters
   private readonly SMOOTHING_FACTOR = 0.15
@@ -37,9 +41,17 @@ export class OffAxisCamera {
   private originalNear = 0.1
   private originalFar = 1000
 
-  constructor(camera: THREE.PerspectiveCamera) {
+  private _controls: { target?: THREE.Vector3 } | null = null
+
+  constructor(camera: THREE.PerspectiveCamera, controls: { target?: THREE.Vector3 } | null = null) {
     this.camera = camera
+    this._controls = controls
     this.storeDefaultProjection()
+    
+    // On mobile, use gyro parallax instead of face tracking
+    if (isMobile && this._controls) {
+      this.gyroParallax = new GyroParallax(camera, this._controls)
+    }
   }
 
   setOnStatusUpdate(callback: (status: 'idle' | 'tracking' | 'error') => void): void {
@@ -63,6 +75,19 @@ export class OffAxisCamera {
   async enable(): Promise<boolean> {
     if (this.isEnabled) return true
 
+    // On mobile, use gyro parallax
+    if (isMobile && this.gyroParallax) {
+      if (this.onStatusUpdate) {
+        this.gyroParallax.setOnStatusUpdate(this.onStatusUpdate)
+      }
+      const success = await this.gyroParallax.enable()
+      if (success) {
+        this.isEnabled = true
+      }
+      return success
+    }
+
+    // Desktop: use face tracking
     try {
       // Request camera permission
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -127,8 +152,14 @@ export class OffAxisCamera {
   disable(): void {
     this.isEnabled = false
     this.stop()
-    this.cleanup()
-    this.restoreDefaultProjection()
+    
+    if (isMobile && this.gyroParallax) {
+      this.gyroParallax.disable()
+    } else {
+      this.cleanup()
+      this.restoreDefaultProjection()
+    }
+    
     this.updateStatus('idle')
   }
 
@@ -138,10 +169,15 @@ export class OffAxisCamera {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
     }
+    if (isMobile && this.gyroParallax) {
+      this.gyroParallax.pause()
+    }
   }
 
   resume(): void {
-    if (this.isEnabled && !this.isActive) {
+    if (isMobile && this.gyroParallax) {
+      this.gyroParallax.resume()
+    } else if (this.isEnabled && !this.isActive) {
       this.start()
     }
   }

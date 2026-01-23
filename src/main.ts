@@ -7,6 +7,7 @@ import { SplatTransitionOverlay } from './transitions/SplatTransitionOverlay'
 import { AudioWavelength } from './effects/AudioWavelength'
 import { AudioPulseDriver } from './effects/AudioPulseDriver'
 import { OffAxisCamera } from './effects/OffAxisCamera'
+import { ColorSampler } from './effects/ColorSampler'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -59,7 +60,7 @@ hudResult.setSoundModeToggleHandler(async (enabled: boolean) => {
 
 hudResult.setOffAxisToggleHandler(async (enabled: boolean) => {
   if (!offAxisCamera && viewer.camera) {
-    offAxisCamera = new OffAxisCamera(viewer.camera)
+    offAxisCamera = new OffAxisCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3 } | null)
     // Set status update callback
     offAxisCamera.setOnStatusUpdate((status: 'idle' | 'tracking' | 'error') => {
       hudResult.updateOffAxisStatus(status)
@@ -107,24 +108,7 @@ app.appendChild(annotationsRoot)
 const overlay = createOverlay()
 app.appendChild(overlay)
 
-// Loading indicator
-const loadingIndicator = document.createElement('div')
-loadingIndicator.className = 'loading-indicator'
-loadingIndicator.innerHTML = '<div class="loading-indicator__bar"></div>'
-app.appendChild(loadingIndicator)
-const loadingBar = loadingIndicator.querySelector<HTMLDivElement>('.loading-indicator__bar')!
-
-const showLoadingIndicator = (progress: number = 0) => {
-  loadingIndicator.classList.add('loading-indicator--active')
-  loadingBar.style.width = `${Math.min(100, Math.max(0, progress))}%`
-}
-
-const hideLoadingIndicator = () => {
-  loadingIndicator.classList.remove('loading-indicator--active')
-  setTimeout(() => {
-    loadingBar.style.width = '0%'
-  }, 200)
-}
+// Bottom loading indicator removed - using top HUD loading bar only
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
 const manifestUrl = '/splats/manifest.json'
@@ -170,6 +154,24 @@ if (viewer.renderer) {
   }, 0)
 }
 
+// Color sampler for Recenter button
+const colorSampler = new ColorSampler(null)
+colorSampler.setOnColorUpdate((data) => {
+  const resetButton = hud.querySelector<HTMLButtonElement>('.hud__button--reset')
+  if (resetButton) {
+    resetButton.style.background = data.contrastStyle.background
+    resetButton.style.borderColor = data.contrastStyle.border
+    resetButton.style.color = data.contrastStyle.color
+    resetButton.style.boxShadow = `${data.contrastStyle.glow}, 0 0 0 1px ${data.contrastStyle.border}`
+  }
+})
+
+// Update color sampler canvas reference
+setTimeout(() => {
+  colorSampler.setSourceCanvas(viewer.renderer?.domElement ?? null)
+  colorSampler.start()
+}, 1000)
+
 let currentSplatMesh:
   | {
       material?: { depthWrite: boolean }
@@ -182,12 +184,20 @@ const particleSystem = new ParticleDisintegration(threeScene)
 const splatTransitionOverlay = new SplatTransitionOverlay(app)
 const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
-const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null)
+const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null, null, null)
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   currentSplatMesh = splatMesh
+  
+  // Update audio pulse driver with new mesh and camera
+  if (splatMesh) {
+    audioPulseDriver.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3 } | null)
+    audioPulseDriver.setSplatMesh(splatMesh)
+  } else {
+    audioPulseDriver.setSplatMesh(null)
+  }
   
   // Handle scene removal (splatMesh is null/undefined)
   if (!splatMesh) {
@@ -366,7 +376,7 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
     onProgress: (percent: number) => {
       if (loadId === activeLoadId) {
         console.log('[LOAD] progress', entry.id, percent + '%')
-        showLoadingIndicator(percent)
+        // Progress shown in HUD loading bar
       }
     },
   })
@@ -404,10 +414,8 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
     await waitForRAF()
 
     console.log('[VISIBLE] ok')
-    hideLoadingIndicator()
   } catch (error) {
     console.error('[LOAD] failed', error)
-    hideLoadingIndicator()
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }

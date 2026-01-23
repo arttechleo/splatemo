@@ -411,9 +411,9 @@ canvas {
   bottom: 0;
   left: 0;
   right: 0;
-  background: rgba(255, 255, 255, var(--glass-opacity-heavy));
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  background: rgba(20, 20, 25, 0.75);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border-top: 1px solid var(--glass-border);
   transform: translateY(100%);
   transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
@@ -422,12 +422,20 @@ canvas {
   flex-direction: column;
   pointer-events: auto;
   z-index: 20;
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
 }
 
 @supports not (backdrop-filter: blur(20px)) {
   .hud__comment-panel {
-    background: rgba(20, 20, 20, 0.95);
+    background: rgba(20, 20, 25, 0.92);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .hud__comment-panel {
+    background: rgba(20, 20, 25, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 }
 
@@ -522,16 +530,19 @@ canvas {
 }
 
 .hud__comment-author {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
   margin-bottom: var(--space-1);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .hud__comment-text {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.5;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text);
+  line-height: 1.6;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .hud__comment-form {
@@ -689,30 +700,7 @@ canvas {
   }
 }
 
-.loading-indicator {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.1);
-  z-index: 15;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.loading-indicator--active {
-  opacity: 1;
-}
-
-.loading-indicator__bar {
-  height: 100%;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.4));
-  width: 0%;
-  transition: width 0.1s linear;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
-}
+/* Bottom loading indicator removed - using top HUD loading bar only */
 
 /* ============================================
    MOBILE ADJUSTMENTS
