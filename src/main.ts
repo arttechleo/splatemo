@@ -11,6 +11,7 @@ import { ColorSampler } from './effects/ColorSampler'
 import { EffectsController } from './effects/EffectsController'
 import { Discovery } from './effects/Discovery'
 import { TapReveal } from './effects/TapReveal'
+import { TapInteractions } from './effects/TapInteractions'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -207,6 +208,8 @@ if (viewer.renderer) {
       autoRotate?: boolean
       autoRotateSpeed?: number
     } | null)
+    tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    tapInteractions.setConfig({ enabled: true })
   }, 0)
 }
 
@@ -244,6 +247,7 @@ const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null, null
 const effectsController = new EffectsController(splatTransitionOverlay)
 const discovery = new Discovery()
 const tapReveal = new TapReveal()
+const tapInteractions = new TapInteractions(splatTransitionOverlay)
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
 
@@ -905,6 +909,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   audioPulseDriver.pause()
   offAxisCamera?.pause()
   effectsController.pause()
+  tapInteractions.setTransitioning(true)
 
   if (isMobile) {
     splatTransitionOverlay.startTransition(
@@ -937,6 +942,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     audioPulseDriver.resume()
     offAxisCamera?.resume()
     effectsController.resume()
+    tapInteractions.setTransitioning(false)
   }
   requestAnimationFrame(tick)
 }
@@ -1373,6 +1379,7 @@ const start = async () => {
   setupPoseSnapping()
   setupSplatNavigation()
   hudResult.setResetHandler(resetView)
+  tapInteractions.setResetHandler(resetView)
   viewer.start()
   
   const camera = viewer.camera
