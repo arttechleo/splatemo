@@ -4,7 +4,7 @@
  * Pseudo-3D depth simulation with impact detection on splat silhouette.
  */
 
-export const DEBUG_RAIN_ONTO_SPLAT = false
+export const DEBUG_RAIN_ONTO_SPLAT = true // Enable for debugging
 
 type Droplet = {
   x: number // Screen X
@@ -76,11 +76,22 @@ export class RainOntoSplat {
   private splatMask: SplatMask | null = null
   private lastMaskUpdate = 0
   private readonly MASK_REFRESH_FPS = 10 // Update mask at 10 FPS
-  private readonly MASK_DOWNSAMPLE = 4 // Downsample factor for performance
+  private maskDownsample = 4 // Adaptive downsampling (starts at 4×)
+  
+  // Debug stats
+  private debugStats = {
+    maskCoverage: 0,
+    maskNonZeroCount: 0,
+    maskTotalPixels: 0,
+    impactsThisSecond: 0,
+    lastImpactCountTime: 0,
+    impactsPerSecond: 0,
+    maskBounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 },
+  }
   
   // Spawn timing
   private lastSpawnTime = 0
-  private spawnInterval = 300 // Base spawn interval (ms) - fewer, hero droplets
+  private spawnInterval = 200 // Base spawn interval (ms) - increased for visibility
   
   // Performance caps
   private readonly MAX_DROPLETS = 25 // Fewer, hero droplets
@@ -88,9 +99,10 @@ export class RainOntoSplat {
   
   // Physics constants
   private readonly GRAVITY = 0.08 // Subtle gravity
-  private readonly BASE_FORWARD_SPEED = 0.12 // Speed toward splat (z increase)
+  private readonly BASE_FORWARD_SPEED = 0.25 // Speed toward splat (z increase) - increased for visibility
   private readonly WIND_STRENGTH = 0.04
   private readonly DEPTH_SCALE = 8.0 // How z maps to perspective
+  private readonly Z_IMPACT_THRESHOLD = 0.6 // Droplet must reach this z to impact
   
   // Visual constants
   private readonly BASE_SIZE = 4.5 // Larger hero droplets
@@ -116,14 +128,7 @@ export class RainOntoSplat {
     this.canvas.style.zIndex = '10'
     this.canvas.style.opacity = '1'
     
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    this.canvas.width = window.innerWidth * dpr
-    this.canvas.height = window.innerHeight * dpr
-    
-    this.ctx = this.canvas.getContext('2d', { alpha: true })
-    if (this.ctx) {
-      this.ctx.scale(dpr, dpr)
-    }
+    this.resize()
     
     document.body.appendChild(this.canvas)
     
@@ -131,12 +136,38 @@ export class RainOntoSplat {
   }
   
   private resize(): void {
-    if (!this.canvas || !this.ctx) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    this.canvas.width = window.innerWidth * dpr
-    this.canvas.height = window.innerHeight * dpr
-    this.ctx.setTransform(1, 0, 0, 1, 0, 0)
-    this.ctx.scale(dpr, dpr)
+    if (!this.canvas) return
+    
+    // Match source canvas pixel dimensions if available, otherwise use window size
+    let targetWidth = window.innerWidth
+    let targetHeight = window.innerHeight
+    
+    if (this.sourceCanvas) {
+      // Use actual pixel buffer size from source canvas
+      targetWidth = this.sourceCanvas.width
+      targetHeight = this.sourceCanvas.height
+    } else {
+      // Fallback: use window size with DPR
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      targetWidth = window.innerWidth * dpr
+      targetHeight = window.innerHeight * dpr
+    }
+    
+    this.canvas.width = targetWidth
+    this.canvas.height = targetHeight
+    
+    // CSS size matches window (for proper overlay positioning)
+    this.canvas.style.width = `${window.innerWidth}px`
+    this.canvas.style.height = `${window.innerHeight}px`
+    
+    this.ctx = this.canvas.getContext('2d', { alpha: true })
+    if (this.ctx) {
+      // Scale context to match pixel dimensions
+      const scaleX = targetWidth / window.innerWidth
+      const scaleY = targetHeight / window.innerHeight
+      this.ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0)
+    }
+    
     // Invalidate mask on resize
     this.splatMask = null
   }
@@ -144,6 +175,10 @@ export class RainOntoSplat {
   setSourceCanvas(canvas: HTMLCanvasElement | null): void {
     this.sourceCanvas = canvas
     this.splatMask = null // Invalidate mask
+    // Resize overlay to match source canvas dimensions
+    if (this.canvas) {
+      this.resize()
+    }
   }
   
   setConfig(config: Partial<RainOntoSplatConfig>): void {
@@ -196,6 +231,7 @@ export class RainOntoSplat {
   /**
    * Build a downsampled splat mask for impact detection.
    * Returns a binary mask (1 = splat present, 0 = empty).
+   * Uses adaptive threshold and downsampling for robustness.
    */
   private buildSplatMask(): SplatMask | null {
     if (!this.sourceCanvas) return null
@@ -215,74 +251,229 @@ export class RainOntoSplat {
       const sourceW = this.sourceCanvas.width
       const sourceH = this.sourceCanvas.height
       
-      // Downsample for performance
-      const maskW = Math.floor(sourceW / this.MASK_DOWNSAMPLE)
-      const maskH = Math.floor(sourceH / this.MASK_DOWNSAMPLE)
+      if (sourceW < 4 || sourceH < 4) return null
       
-      // Sample downsampled region
-      const sampleW = Math.min(maskW * this.MASK_DOWNSAMPLE, sourceW)
-      const sampleH = Math.min(maskH * this.MASK_DOWNSAMPLE, sourceH)
+      // Adaptive downsampling: start with current value, reduce if coverage too low
+      let currentDownsample = this.maskDownsample
+      let maskData: Uint8Array | null = null
+      let maskW = 0
+      let maskH = 0
+      let coverage = 0
       
-      const imageData = ctx.getImageData(0, 0, sampleW, sampleH)
-      const data = imageData.data
-      
-      // Build binary mask (threshold on alpha/brightness)
-      const maskData = new Uint8Array(maskW * maskH)
-      const ALPHA_THRESHOLD = 20
-      const BRIGHTNESS_THRESHOLD = 10
-      
-      for (let my = 0; my < maskH; my++) {
-        for (let mx = 0; mx < maskW; mx++) {
-          const sx = mx * this.MASK_DOWNSAMPLE
-          const sy = my * this.MASK_DOWNSAMPLE
-          const si = (sy * sampleW + sx) << 2
-          
-          const r = data[si]
-          const g = data[si + 1]
-          const b = data[si + 2]
-          const a = data[si + 3]
-          
-          // Check if pixel is part of splat (has alpha or brightness)
+      // Try building mask with adaptive threshold
+      for (let attempt = 0; attempt < 3; attempt++) {
+        maskW = Math.floor(sourceW / currentDownsample)
+        maskH = Math.floor(sourceH / currentDownsample)
+        
+        if (maskW < 4 || maskH < 4) break
+        
+        const sampleW = Math.min(maskW * currentDownsample, sourceW)
+        const sampleH = Math.min(maskH * currentDownsample, sourceH)
+        
+        const imageData = ctx.getImageData(0, 0, sampleW, sampleH)
+        const data = imageData.data
+        
+        // Compute adaptive threshold from histogram
+        const alphaValues: number[] = []
+        const brightnessValues: number[] = []
+        
+        for (let i = 0; i < data.length; i += 4) {
+          const a = data[i + 3]
+          const r = data[i]
+          const g = data[i + 1]
+          const b = data[i + 2]
           const brightness = (r + g + b) / 3
-          const isSplat = a > ALPHA_THRESHOLD || brightness > BRIGHTNESS_THRESHOLD
           
-          maskData[my * maskW + mx] = isSplat ? 1 : 0
+          if (a > 0) alphaValues.push(a)
+          if (brightness > 0) brightnessValues.push(brightness)
+        }
+        
+        // Compute mean and std for adaptive threshold
+        const alphaMean = alphaValues.length > 0 
+          ? alphaValues.reduce((a, b) => a + b, 0) / alphaValues.length 
+          : 0
+        const brightnessMean = brightnessValues.length > 0
+          ? brightnessValues.reduce((a, b) => a + b, 0) / brightnessValues.length
+          : 0
+        
+        // Adaptive threshold: mean - std, clamped to reasonable range
+        const alphaStd = alphaValues.length > 0
+          ? Math.sqrt(alphaValues.reduce((sum, val) => sum + Math.pow(val - alphaMean, 2), 0) / alphaValues.length)
+          : 0
+        const brightnessStd = brightnessValues.length > 0
+          ? Math.sqrt(brightnessValues.reduce((sum, val) => sum + Math.pow(val - brightnessMean, 2), 0) / brightnessValues.length)
+          : 0
+        
+        let alphaThreshold = Math.max(5, Math.min(30, alphaMean - alphaStd * 0.5))
+        let brightnessThreshold = Math.max(3, Math.min(20, brightnessMean - brightnessStd * 0.5))
+        
+        // Build mask
+        maskData = new Uint8Array(maskW * maskH)
+        let nonZeroCount = 0
+        let minX = maskW
+        let maxX = 0
+        let minY = maskH
+        let maxY = 0
+        
+        for (let my = 0; my < maskH; my++) {
+          for (let mx = 0; mx < maskW; mx++) {
+            const sx = mx * currentDownsample
+            const sy = my * currentDownsample
+            const si = (sy * sampleW + sx) << 2
+            
+            const r = data[si]
+            const g = data[si + 1]
+            const b = data[si + 2]
+            const a = data[si + 3]
+            
+            const brightness = (r + g + b) / 3
+            const isSplat = a > alphaThreshold || brightness > brightnessThreshold
+            
+            if (isSplat) {
+              maskData[my * maskW + mx] = 1
+              nonZeroCount++
+              minX = Math.min(minX, mx)
+              maxX = Math.max(maxX, mx)
+              minY = Math.min(minY, my)
+              maxY = Math.max(maxY, my)
+            } else {
+              maskData[my * maskW + mx] = 0
+            }
+          }
+        }
+        
+        coverage = nonZeroCount / (maskW * maskH)
+        
+        // If coverage is reasonable, use this mask
+        if (coverage > 0.01 && coverage < 0.95) {
+          break
+        }
+        
+        // If coverage too low, reduce downsampling and try again
+        if (coverage < 0.01 && currentDownsample > 2) {
+          currentDownsample = Math.max(2, currentDownsample - 1)
+          continue
+        }
+        
+        // If coverage too high, increase threshold slightly
+        if (coverage >= 0.95) {
+          alphaThreshold = Math.min(50, alphaThreshold + 5)
+          brightnessThreshold = Math.min(30, brightnessThreshold + 3)
+          // Rebuild with new threshold
+          nonZeroCount = 0
+          minX = maskW
+          maxX = 0
+          minY = maskH
+          maxY = 0
+          
+          for (let my = 0; my < maskH; my++) {
+            for (let mx = 0; mx < maskW; mx++) {
+              const sx = mx * currentDownsample
+              const sy = my * currentDownsample
+              const si = (sy * sampleW + sx) << 2
+              
+              const r = data[si]
+              const g = data[si + 1]
+              const b = data[si + 2]
+              const a = data[si + 3]
+              
+              const brightness = (r + g + b) / 3
+              const isSplat = a > alphaThreshold || brightness > brightnessThreshold
+              
+              if (isSplat) {
+                maskData![my * maskW + mx] = 1
+                nonZeroCount++
+                minX = Math.min(minX, mx)
+                maxX = Math.max(maxX, mx)
+                minY = Math.min(minY, my)
+                maxY = Math.max(maxY, my)
+              } else {
+                maskData![my * maskW + mx] = 0
+              }
+            }
+          }
+          coverage = nonZeroCount / (maskW * maskH)
+          break
         }
       }
+      
+      if (!maskData || coverage < 0.001) {
+        return null
+      }
+      
+      // Count non-zero pixels and compute bounds
+      let nonZeroCount = 0
+      let minX = maskW
+      let maxX = 0
+      let minY = maskH
+      let maxY = 0
+      
+      for (let i = 0; i < maskData.length; i++) {
+        if (maskData[i] === 1) {
+          nonZeroCount++
+          const mx = i % maskW
+          const my = Math.floor(i / maskW)
+          minX = Math.min(minX, mx)
+          maxX = Math.max(maxX, mx)
+          minY = Math.min(minY, my)
+          maxY = Math.max(maxY, my)
+        }
+      }
+      
+      // Update debug stats
+      this.debugStats.maskCoverage = coverage
+      this.debugStats.maskNonZeroCount = nonZeroCount
+      this.debugStats.maskTotalPixels = maskW * maskH
+      this.debugStats.maskBounds = nonZeroCount > 0 
+        ? { minX, maxX, minY, maxY }
+        : { minX: 0, maxX: 0, minY: 0, maxY: 0 }
+      this.maskDownsample = currentDownsample
       
       this.splatMask = {
         data: maskData,
         width: maskW,
         height: maskH,
-        scale: this.MASK_DOWNSAMPLE,
+        scale: currentDownsample,
       }
       
       this.lastMaskUpdate = now
       return this.splatMask
-    } catch {
+    } catch (error) {
+      console.warn('[RAIN_ONTO_SPLAT] Mask build error', error)
       return null
     }
   }
   
   /**
    * Check if a screen position hits the splat mask.
+   * Uses pixel coordinates matching source canvas dimensions.
    */
-  private checkImpact(x: number, y: number): boolean {
-    if (!this.splatMask) return false
+  private checkImpact(x: number, y: number, z: number): boolean {
+    if (!this.splatMask || !this.sourceCanvas) return false
     
+    // Droplet must have progressed far enough in z-space
+    if (z < this.Z_IMPACT_THRESHOLD) return false
+    
+    // Convert screen coordinates (CSS pixels) to source canvas pixel coordinates
     const W = window.innerWidth
     const H = window.innerHeight
+    const sourceW = this.sourceCanvas.width
+    const sourceH = this.sourceCanvas.height
     
-    // Convert screen coords to mask coords
-    const maskX = Math.floor((x / W) * this.splatMask.width)
-    const maskY = Math.floor((y / H) * this.splatMask.height)
+    // Map screen coords to source canvas pixel coords
+    const canvasX = (x / W) * sourceW
+    const canvasY = (y / H) * sourceH
+    
+    // Convert to mask coordinates (accounting for downsampling)
+    const maskX = Math.floor(canvasX / this.splatMask.scale)
+    const maskY = Math.floor(canvasY / this.splatMask.scale)
     
     if (maskX < 0 || maskX >= this.splatMask.width || maskY < 0 || maskY >= this.splatMask.height) {
       return false
     }
     
-    // Check mask (with small radius for tolerance)
-    const radius = 1
+    // Check mask with increased tolerance radius (especially for downsampled masks)
+    const radius = Math.max(2, Math.ceil(this.splatMask.scale / 2)) // Larger radius for downsampled masks
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dx = -radius; dx <= radius; dx++) {
         const mx = maskX + dx
@@ -300,6 +491,7 @@ export class RainOntoSplat {
   
   /**
    * Sample splat color at impact position for tinting.
+   * Uses correct coordinate mapping from screen to canvas pixels.
    */
   private sampleSplatColor(x: number, y: number): { r: number; g: number; b: number } {
     if (!this.sourceCanvas) return { r: 255, g: 255, b: 255 }
@@ -310,10 +502,18 @@ export class RainOntoSplat {
       
       const W = window.innerWidth
       const H = window.innerHeight
-      const canvasX = Math.floor((x / W) * this.sourceCanvas.width)
-      const canvasY = Math.floor((y / H) * this.sourceCanvas.height)
+      const sourceW = this.sourceCanvas.width
+      const sourceH = this.sourceCanvas.height
       
-      const imageData = ctx.getImageData(canvasX, canvasY, 1, 1)
+      // Map screen coords to source canvas pixel coords
+      const canvasX = Math.floor((x / W) * sourceW)
+      const canvasY = Math.floor((y / H) * sourceH)
+      
+      // Clamp to valid range
+      const clampedX = Math.max(0, Math.min(sourceW - 1, canvasX))
+      const clampedY = Math.max(0, Math.min(sourceH - 1, canvasY))
+      
+      const imageData = ctx.getImageData(clampedX, clampedY, 1, 1)
       const data = imageData.data
       
       if (data[3] > 10) {
@@ -352,6 +552,50 @@ export class RainOntoSplat {
     }
     
     this.impactStreaks.push(streak)
+  }
+  
+  private spawnTestDroplet(): void {
+    if (this.droplets.length >= this.MAX_DROPLETS) return
+    
+    const W = window.innerWidth
+    const H = window.innerHeight
+    
+    // Spawn at center of screen for testing
+    const x = W / 2
+    const y = H * 0.2 // Near top
+    
+    const z = 0.1 // Start near camera
+    
+    const size = this.BASE_SIZE + this.SIZE_VARIANCE
+    
+    const forwardSpeed = this.BASE_FORWARD_SPEED
+    const vz = forwardSpeed * (0.5 + this.config.depthTravel * 0.5)
+    
+    const highlightX = size * 0.25
+    const highlightY = -size * 0.25
+    
+    const droplet: Droplet = {
+      x,
+      y,
+      z,
+      vx: 0,
+      vy: this.GRAVITY,
+      vz,
+      size,
+      age: 0,
+      hasImpacted: false,
+      impactX: 0,
+      impactY: 0,
+      impactTime: 0,
+      highlightX,
+      highlightY,
+      tintR: 255,
+      tintG: 255,
+      tintB: 255,
+      hasTint: false,
+    }
+    
+    this.droplets.push(droplet)
   }
   
   private spawnDroplet(): void {
@@ -440,6 +684,18 @@ export class RainOntoSplat {
     if (now - this.lastSpawnTime >= spawnInterval) {
       this.spawnDroplet()
       this.lastSpawnTime = now
+      
+      // Spawn test droplet in debug mode (center of screen)
+      if (DEBUG_RAIN_ONTO_SPLAT && Math.random() < 0.1) {
+        this.spawnTestDroplet()
+      }
+    }
+    
+    // Update impact counter (reset every second)
+    if (now - this.debugStats.lastImpactCountTime >= 1000) {
+      this.debugStats.impactsPerSecond = this.debugStats.impactsThisSecond
+      this.debugStats.impactsThisSecond = 0
+      this.debugStats.lastImpactCountTime = now
     }
     
     // Update existing droplets
@@ -469,13 +725,16 @@ export class RainOntoSplat {
       // Project to screen for impact check
       const projected = this.projectToScreen(droplet)
       
-      // Check impact
-      if (mask && this.checkImpact(projected.screenX, projected.screenY)) {
+      // Check impact (requires z progress + mask hit)
+      if (mask && this.checkImpact(projected.screenX, projected.screenY, droplet.z)) {
         // Impact detected!
         droplet.hasImpacted = true
         droplet.impactX = projected.screenX
         droplet.impactY = projected.screenY
         droplet.impactTime = now
+        
+        // Update impact counter for debug
+        this.debugStats.impactsThisSecond++
         
         // Sample splat color for tinting
         const tint = this.sampleSplatColor(projected.screenX, projected.screenY)
@@ -640,6 +899,97 @@ export class RainOntoSplat {
     this.ctx.restore()
   }
   
+  private drawDebugVisualization(): void {
+    if (!this.ctx || !this.canvas) return
+    
+    const W = window.innerWidth
+    const H = window.innerHeight
+    
+    // Draw mask overlay
+    if (this.splatMask) {
+      const maskScale = this.splatMask.scale
+      const sourceW = this.sourceCanvas?.width || W
+      const sourceH = this.sourceCanvas?.height || H
+      
+      // Draw mask as semi-transparent green overlay
+      this.ctx.save()
+      this.ctx.globalAlpha = 0.3
+      this.ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'
+      
+      for (let my = 0; my < this.splatMask.height; my++) {
+        for (let mx = 0; mx < this.splatMask.width; mx++) {
+          if (this.splatMask.data[my * this.splatMask.width + mx] === 1) {
+            // Convert mask coords to screen coords
+            const screenX = (mx * maskScale / sourceW) * W
+            const screenY = (my * maskScale / sourceH) * H
+            const pixelSize = (maskScale / sourceW) * W
+            
+            this.ctx.fillRect(screenX, screenY, pixelSize, pixelSize)
+          }
+        }
+      }
+      this.ctx.restore()
+      
+      // Draw bounding box
+      if (this.debugStats.maskBounds.maxX > this.debugStats.maskBounds.minX) {
+        this.ctx.save()
+        this.ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)'
+        this.ctx.lineWidth = 2
+        const minX = (this.debugStats.maskBounds.minX * maskScale / sourceW) * W
+        const maxX = (this.debugStats.maskBounds.maxX * maskScale / sourceW) * W
+        const minY = (this.debugStats.maskBounds.minY * maskScale / sourceH) * H
+        const maxY = (this.debugStats.maskBounds.maxY * maskScale / sourceH) * H
+        this.ctx.strokeRect(minX, minY, maxX - minX, maxY - minY)
+        this.ctx.restore()
+      }
+    }
+    
+    // Draw droplet crosshairs
+    for (const droplet of this.droplets) {
+      const projected = this.projectToScreen(droplet)
+      const x = projected.screenX
+      const y = projected.screenY
+      
+      // Check if this droplet would hit
+      const wouldHit = this.splatMask && droplet.z >= this.Z_IMPACT_THRESHOLD && 
+        this.checkImpact(x, y, droplet.z)
+      
+      this.ctx.save()
+      this.ctx.strokeStyle = wouldHit ? 'rgba(255, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.6)'
+      this.ctx.lineWidth = 1
+      const crossSize = 4
+      this.ctx.beginPath()
+      this.ctx.moveTo(x - crossSize, y)
+      this.ctx.lineTo(x + crossSize, y)
+      this.ctx.moveTo(x, y - crossSize)
+      this.ctx.lineTo(x, y + crossSize)
+      this.ctx.stroke()
+      this.ctx.restore()
+    }
+    
+    // Draw HUD stats
+    this.ctx.save()
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
+    this.ctx.fillRect(10, 10, 280, 140)
+    this.ctx.fillStyle = '#fff'
+    this.ctx.font = '12px monospace'
+    let yPos = 28
+    this.ctx.fillText(`Mask Coverage: ${(this.debugStats.maskCoverage * 100).toFixed(2)}%`, 15, yPos)
+    yPos += 18
+    this.ctx.fillText(`Mask Pixels: ${this.debugStats.maskNonZeroCount}/${this.debugStats.maskTotalPixels}`, 15, yPos)
+    yPos += 18
+    this.ctx.fillText(`Downsample: ${this.maskDownsample}×`, 15, yPos)
+    yPos += 18
+    this.ctx.fillText(`Droplets: ${this.droplets.length}`, 15, yPos)
+    yPos += 18
+    this.ctx.fillText(`Impacts/sec: ${this.debugStats.impactsPerSecond}`, 15, yPos)
+    yPos += 18
+    this.ctx.fillText(`Streaks: ${this.impactStreaks.length}`, 15, yPos)
+    yPos += 18
+    this.ctx.fillText(`Mask: ${this.splatMask ? 'OK' : 'NULL'}`, 15, yPos)
+    this.ctx.restore()
+  }
+  
   private animate = (): void => {
     if (!this.isActive || !this.config.enabled || !this.ctx || !this.canvas) {
       return
@@ -664,15 +1014,9 @@ export class RainOntoSplat {
       this.drawDroplet(droplet)
     }
     
+    // Debug visualization
     if (DEBUG_RAIN_ONTO_SPLAT) {
-      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
-      this.ctx.fillRect(10, 10, 250, 100)
-      this.ctx.fillStyle = '#fff'
-      this.ctx.font = '12px monospace'
-      this.ctx.fillText(`Droplets: ${this.droplets.length}`, 15, 30)
-      this.ctx.fillText(`Streaks: ${this.impactStreaks.length}`, 15, 50)
-      this.ctx.fillText(`Mask: ${this.splatMask ? 'OK' : 'NULL'}`, 15, 70)
-      this.ctx.fillText(`Intensity: ${this.config.intensity.toFixed(2)}`, 15, 90)
+      this.drawDebugVisualization()
     }
     
     this.rafId = requestAnimationFrame(this.animate)
