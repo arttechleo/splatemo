@@ -7,6 +7,7 @@
 import * as THREE from 'three'
 import { SplatTransitionOverlay } from '../transitions/SplatTransitionOverlay'
 import { LensRain } from './LensRain'
+import { RainOntoSplat } from './RainOntoSplat'
 
 export type EffectPreset = 
   | 'none'
@@ -17,6 +18,7 @@ export type EffectPreset =
   | 'glitter'
   | 'glow-dissolve'
   | 'rain'
+  | 'rain-onto-splat'
 
 export type EffectIntensityPreset = 'subtle' | 'medium' | 'vivid'
 
@@ -43,6 +45,9 @@ export class EffectsController {
   
   // Lens Rain effect (separate from overlay system)
   private lensRain: LensRain | null = null
+  
+  // Rain Onto Splat effect (separate from overlay system)
+  private rainOntoSplat: RainOntoSplat | null = null
   
   // Intensity multipliers by preset
   private readonly INTENSITY_MULTIPLIERS = {
@@ -71,6 +76,7 @@ export class EffectsController {
   constructor(overlay: SplatTransitionOverlay) {
     this.overlay = overlay
     this.lensRain = new LensRain()
+    this.rainOntoSplat = new RainOntoSplat()
   }
 
   setSourceCanvas(canvas: HTMLCanvasElement | null): void {
@@ -78,6 +84,9 @@ export class EffectsController {
     this.cachedSnapshot = null
     if (this.lensRain) {
       this.lensRain.setSourceCanvas(canvas)
+    }
+    if (this.rainOntoSplat) {
+      this.rainOntoSplat.setSourceCanvas(canvas)
     }
   }
   
@@ -102,9 +111,37 @@ export class EffectsController {
           })
         }
         this.stop() // Stop overlay effects
+        if (this.rainOntoSplat) {
+          this.rainOntoSplat.setConfig({ enabled: false })
+        }
       } else {
         if (this.lensRain) {
           this.lensRain.setConfig({ enabled: false })
+        }
+        this.stop()
+      }
+      return
+    }
+    
+    // Handle Rain Onto Splat separately (it's not overlay-based)
+    if (this.config.preset === 'rain-onto-splat') {
+      if (this.config.enabled) {
+        if (this.rainOntoSplat) {
+          this.rainOntoSplat.setConfig({
+            intensity: this.config.intensity,
+            depthTravel: 0.6, // Default, can be made configurable
+            decay: 0.7, // Default, can be made configurable
+            wind: 0.2, // Default, can be made configurable
+            enabled: true,
+          })
+        }
+        this.stop() // Stop overlay effects
+        if (this.lensRain) {
+          this.lensRain.setConfig({ enabled: false })
+        }
+      } else {
+        if (this.rainOntoSplat) {
+          this.rainOntoSplat.setConfig({ enabled: false })
         }
         this.stop()
       }
@@ -117,10 +154,16 @@ export class EffectsController {
       if (this.lensRain) {
         this.lensRain.setConfig({ enabled: false })
       }
+      if (this.rainOntoSplat) {
+        this.rainOntoSplat.setConfig({ enabled: false })
+      }
     } else {
       this.start()
       if (this.lensRain) {
         this.lensRain.setConfig({ enabled: false })
+      }
+      if (this.rainOntoSplat) {
+        this.rainOntoSplat.setConfig({ enabled: false })
       }
     }
   }
@@ -138,6 +181,9 @@ export class EffectsController {
     if (this.lensRain) {
       this.lensRain.pause()
     }
+    if (this.rainOntoSplat) {
+      this.rainOntoSplat.pause()
+    }
   }
 
   resume(): void {
@@ -146,6 +192,9 @@ export class EffectsController {
     }
     if (this.lensRain && this.config.preset === 'rain' && this.config.enabled) {
       this.lensRain.resume()
+    }
+    if (this.rainOntoSplat && this.config.preset === 'rain-onto-splat' && this.config.enabled) {
+      this.rainOntoSplat.resume()
     }
   }
 
@@ -479,6 +528,10 @@ export class EffectsController {
     if (this.lensRain) {
       this.lensRain.destroy()
       this.lensRain = null
+    }
+    if (this.rainOntoSplat) {
+      this.rainOntoSplat.destroy()
+      this.rainOntoSplat = null
     }
   }
 }
