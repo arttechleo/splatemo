@@ -26,6 +26,7 @@ export class GyroParallax {
   private readonly MAX_TILT_RADIANS = 0.15 // ~8.6 degrees max tilt
   private readonly PARALLAX_SCALE = 0.08 // Scale factor for parallax effect
   private readonly BASE_DISTANCE = 6 // Base camera distance for scaling
+  private readonly MAX_PARALLAX_INTENSITY = 0.12 // Clamped intensity
   
   // Event handlers (stored for cleanup)
   private orientationHandler: ((event: DeviceOrientationEvent) => void) | null = null
@@ -194,10 +195,10 @@ export class GyroParallax {
     const offsetX = this.smoothedTilt.x * this.PARALLAX_SCALE * distanceScale
     const offsetY = this.smoothedTilt.y * this.PARALLAX_SCALE * distanceScale
 
-    // Clamp offset to prevent nausea
-    const maxOffset = 0.12 * distanceScale
-    this.appliedOffset.x = Math.max(-maxOffset, Math.min(maxOffset, offsetX))
-    this.appliedOffset.y = Math.max(-maxOffset, Math.min(maxOffset, offsetY))
+          // Clamp offset to prevent nausea (respects intensity cap)
+          const maxOffset = this.MAX_PARALLAX_INTENSITY * distanceScale
+          this.appliedOffset.x = Math.max(-maxOffset, Math.min(maxOffset, offsetX))
+          this.appliedOffset.y = Math.max(-maxOffset, Math.min(maxOffset, offsetY))
 
     // Apply offset to camera position (additive to current orbit)
     const direction = this.camera.position.clone().sub(this.controls.target).normalize()

@@ -5,6 +5,7 @@
  */
 
 import { SplatTransitionOverlay } from '../transitions/SplatTransitionOverlay'
+import { EffectGovernor, type ActiveEffect } from './EffectGovernor'
 
 export interface TapInteractionsConfig {
   rippleDuration: number // ms
@@ -18,6 +19,7 @@ export interface TapInteractionsConfig {
 export class TapInteractions {
   private overlay: SplatTransitionOverlay
   private sourceCanvas: HTMLCanvasElement | null = null
+  private governor: EffectGovernor
   private config: TapInteractionsConfig = {
     rippleDuration: 750,
     rippleIntensity: 0.8,
@@ -26,6 +28,16 @@ export class TapInteractions {
     spotlightIntensity: 0.7,
     enabled: false,
   }
+  
+  // Memory echo (ghost impressions)
+  private memoryEchoes: Array<{ x: number; y: number; age: number; lifetime: number }> = []
+  private readonly MAX_MEMORY_ECHOES = 6
+  
+  // Depth scrubbing
+  private isDepthScrubbing = false
+  private scrubStartY = 0
+  private scrubCurrentY = 0
+  private scrubRafId: number | null = null
   
   // Gesture state
   private tapStartTime = 0
@@ -51,10 +63,12 @@ export class TapInteractions {
   // Transition state
   private isTransitioning = false
   
-  constructor(overlay: SplatTransitionOverlay) {
+  constructor(overlay: SplatTransitionOverlay, governor: EffectGovernor) {
     this.overlay = overlay
+    this.governor = governor
     this.initSpotlightCanvas()
     this.setupEventListeners()
+    this.startMemoryEchoUpdate()
   }
   
   private initSpotlightCanvas(): void {
@@ -151,6 +165,8 @@ export class TapInteractions {
     this.lastMoveY = y
     this.tapStartTime = performance.now()
     this.isHolding = false
+    this.scrubStartY = y
+    this.scrubCurrentY = y
     
     // Start hold detection
     setTimeout(() => {
@@ -170,11 +186,24 @@ export class TapInteractions {
   private handleMove(x: number, y: number): void {
     if (!this.config.enabled) return
     
+    const moveDx = Math.abs(x - this.lastMoveX)
+    const moveDy = Math.abs(y - this.lastMoveY)
+    
+    // Check for depth scrubbing (slow vertical drag)
+    if (!this.isHolding && Math.abs(y - this.scrubStartY) > 20 && moveDx < 5) {
+      // Slow vertical movement, likely depth scrubbing
+      if (!this.isDepthScrubbing) {
+        this.startDepthScrubbing(y)
+      } else {
+        this.scrubCurrentY = y
+      }
+    } else if (this.isDepthScrubbing && (moveDx > 10 || Math.abs(y - this.scrubStartY) < 10)) {
+      // Cancel scrubbing if horizontal movement or returned to start
+      this.stopDepthScrubbing()
+    }
+    
     // Update hold position if holding
     if (this.isHolding) {
-      const moveDx = Math.abs(x - this.lastMoveX)
-      const moveDy = Math.abs(y - this.lastMoveY)
-      
       // Cancel hold if moved too much
       if (moveDx > this.MOVEMENT_THRESHOLD || moveDy > this.MOVEMENT_THRESHOLD) {
         this.cancelHold()
@@ -190,6 +219,12 @@ export class TapInteractions {
   
   private handleRelease(): void {
     if (!this.config.enabled) return
+    
+    // Stop depth scrubbing
+    if (this.isDepthScrubbing) {
+      this.stopDepthScrubbing()
+      return
+    }
     
     const now = performance.now()
     const elapsed = now - this.tapStartTime
@@ -252,8 +287,35 @@ export class TapInteractions {
     this.holdX = x
     this.holdY = y
     this.spotlightRadius = 20
+    const holdStartTime = performance.now()
+    
+    // Check for long-press (slow time activation)
+    setTimeout(() => {
+      if (this.isHolding && performance.now() - holdStartTime >= 800) {
+        // Long-press detected: activate slow time
+        this.triggerSlowTime()
+      }
+    }, 800)
+    
+    // Register as primary effect
+    const effect: ActiveEffect = {
+      id: 'touch-spotlight',
+      type: 'primary',
+      intensity: this.config.spotlightIntensity,
+      startTime: performance.now(),
+      onSuppress: () => {
+        this.cancelHold()
+      },
+    }
+    this.governor.registerEffect(effect)
     
     this.animateSpotlight()
+  }
+  
+  private triggerSlowTime(): void {
+    // This will be wired to TimeEffects
+    const event = new CustomEvent('slow-time-activate')
+    document.dispatchEvent(event)
   }
   
   private cancelHold(): void {
@@ -265,8 +327,135 @@ export class TapInteractions {
       this.holdRafId = null
     }
     
+    // Unregister effect
+    this.governor.unregisterEffect('touch-spotlight')
+    
     // Fade out spotlight
     this.fadeOutSpotlight()
+  }
+  
+  private addMemoryEcho(x: number, y: number): void {
+    // Remove oldest if at max
+    if (this.memoryEchoes.length >= this.MAX_MEMORY_ECHOES) {
+      this.memoryEchoes.shift()
+    }
+    
+    this.memoryEchoes.push({
+      x,
+      y,
+      age: 0,
+      lifetime: 4000, // 4 seconds
+    })
+  }
+  
+  private startMemoryEchoUpdate(): void {
+    const update = () => {
+      if (!this.config.enabled) {
+        requestAnimationFrame(update)
+        return
+      }
+      
+      // Update memory echoes
+      for (const echo of this.memoryEchoes) {
+        echo.age += 16.67
+      }
+      
+      // Remove expired echoes
+      this.memoryEchoes = this.memoryEchoes.filter(e => e.age < e.lifetime)
+      
+      // Draw memory echoes
+      this.drawMemoryEchoes()
+      
+      requestAnimationFrame(update)
+    }
+    requestAnimationFrame(update)
+  }
+  
+  private drawMemoryEchoes(): void {
+    if (!this.spotlightCtx || this.memoryEchoes.length === 0) return
+    
+    const W = window.innerWidth
+    const H = window.innerHeight
+    
+    // Clear with fade
+    this.spotlightCtx.fillStyle = 'rgba(0, 0, 0, 0.02)'
+    this.spotlightCtx.fillRect(0, 0, W, H)
+    
+    // Draw echoes
+    for (const echo of this.memoryEchoes) {
+      const ageRatio = echo.age / echo.lifetime
+      const alpha = (1 - ageRatio) * 0.3
+      const radius = 15 + ageRatio * 25
+      
+      this.spotlightCtx.save()
+      this.spotlightCtx.globalAlpha = alpha
+      this.spotlightCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
+      this.spotlightCtx.lineWidth = 1.5
+      this.spotlightCtx.beginPath()
+      this.spotlightCtx.arc(echo.x, echo.y, radius, 0, Math.PI * 2)
+      this.spotlightCtx.stroke()
+      this.spotlightCtx.restore()
+    }
+  }
+  
+  private startDepthScrubbing(y: number): void {
+    if (this.isDepthScrubbing) return
+    
+    this.isDepthScrubbing = true
+    this.scrubCurrentY = y
+    
+    // Register as secondary effect
+    const effect: ActiveEffect = {
+      id: 'touch-depth-scrub',
+      type: 'secondary',
+      intensity: 0.4,
+      startTime: performance.now(),
+      onSuppress: () => {
+        this.stopDepthScrubbing()
+      },
+    }
+    this.governor.registerEffect(effect)
+    
+    this.animateDepthScrub()
+  }
+  
+  private stopDepthScrubbing(): void {
+    if (!this.isDepthScrubbing) return
+    
+    this.isDepthScrubbing = false
+    if (this.scrubRafId) {
+      cancelAnimationFrame(this.scrubRafId)
+      this.scrubRafId = null
+    }
+    
+    this.governor.unregisterEffect('touch-depth-scrub')
+  }
+  
+  private animateDepthScrub = (): void => {
+    if (!this.isDepthScrubbing || !this.sourceCanvas) {
+      return
+    }
+    
+    const scrubDelta = this.scrubCurrentY - this.scrubStartY
+    const scrubSpeed = Math.abs(scrubDelta) / 100 // Normalize
+    
+    // Create depth layers based on scrub position
+    if (scrubSpeed > 0.1) {
+      const bandY = this.scrubCurrentY
+      const bandHeight = 50
+      
+      this.overlay.startAudioPulse({
+        bandCenterY: bandY,
+        bandHeight,
+        direction: scrubDelta > 0 ? 'down' : 'up',
+        intensity: 0.3,
+        durationMs: 500,
+        sourceCanvas: this.sourceCanvas,
+        intensityMultiplier: 0.8, // Subtle
+      })
+    }
+    
+    this.scrubRafId = requestAnimationFrame(this.animateDepthScrub)
   }
   
   private cancelTap(): void {
@@ -282,6 +471,19 @@ export class TapInteractions {
     
     // Ripple burst: circular wave expanding from tap point
     this.triggerRippleBurst(x, y)
+    
+    // Add memory echo
+    this.addMemoryEcho(x, y)
+    
+    // Register as primary effect
+    const effect: ActiveEffect = {
+      id: 'touch-ripple',
+      type: 'primary',
+      intensity: this.config.rippleIntensity,
+      startTime: performance.now(),
+      duration: this.config.rippleDuration,
+    }
+    this.governor.registerEffect(effect)
   }
   
   private handleDoubleTap(x: number, y: number): void {
@@ -289,6 +491,20 @@ export class TapInteractions {
     
     // Disintegrate pop + reassemble
     this.triggerDisintegratePop(x, y)
+    
+    // Also trigger density highlight
+    const event = new CustomEvent('density-highlight-activate')
+    document.dispatchEvent(event)
+    
+    // Register as primary effect
+    const effect: ActiveEffect = {
+      id: 'touch-disintegrate',
+      type: 'primary',
+      intensity: this.config.disintegrateIntensity,
+      startTime: performance.now(),
+      duration: this.config.disintegrateDuration,
+    }
+    this.governor.registerEffect(effect)
   }
   
   /**

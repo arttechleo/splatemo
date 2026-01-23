@@ -47,6 +47,11 @@ export class SplatTransitionOverlay {
   private transitionToken = 0
   private isFinishing = false
   private finishStartTime = 0
+  private slowTimeFactor = 1.0 // 1.0 = normal, <1.0 = slowed
+  
+  setSlowTimeFactor(factor: number): void {
+    this.slowTimeFactor = Math.max(0.1, Math.min(1.0, factor))
+  }
   private debugInfo: {
     mode: 'pixelSnapshot' | 'fallback'
     particleCount: number
@@ -478,11 +483,14 @@ export class SplatTransitionOverlay {
           }
         }
 
-        p.x += p.vx * (1 + jitterDecay * 0.3)
-        p.y += p.vy * (1 + jitterDecay * 0.2)
-        p.a *= FALLOFF
-        p.vx *= VELOCITY_DAMP
-        p.vy *= VELOCITY_DAMP
+        // Apply slow time factor
+        const timeScale = this.slowTimeFactor
+        
+        p.x += p.vx * (1 + jitterDecay * 0.3) * timeScale
+        p.y += p.vy * (1 + jitterDecay * 0.2) * timeScale
+        p.a *= Math.pow(FALLOFF, 1 / timeScale) // Slower decay when time is slowed
+        p.vx *= Math.pow(VELOCITY_DAMP, 1 / timeScale)
+        p.vy *= Math.pow(VELOCITY_DAMP, 1 / timeScale)
         if (p.a < 0.02) continue
 
         const finalAlpha = p.a * this.overlayOpacity * fade

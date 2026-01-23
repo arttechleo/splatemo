@@ -12,6 +12,11 @@ import { EffectsController } from './effects/EffectsController'
 import { Discovery } from './effects/Discovery'
 import { TapReveal } from './effects/TapReveal'
 import { TapInteractions } from './effects/TapInteractions'
+import { EffectGovernor } from './effects/EffectGovernor'
+import { IdleEffects } from './effects/IdleEffects'
+import { MotionEffects } from './effects/MotionEffects'
+import { TimeEffects } from './effects/TimeEffects'
+import { InterpretiveEffects } from './effects/InterpretiveEffects'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -132,6 +137,19 @@ hudResult.setDiscoveryModeChangeHandler((mode: string) => {
   
   // Enable/disable tap reveal
   tapReveal.setEnabled(mode === 'inspect')
+  
+  // Disable Discovery effects in Inspect mode
+  if (mode === 'inspect') {
+    effectGovernor.clearAll()
+    idleEffects.stop()
+    motionEffects.disable()
+  } else {
+    idleEffects.start()
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    if (isMobile) {
+      motionEffects.enable()
+    }
+  }
 })
 
 hudResult.setNextPoseHandler(() => {
@@ -210,7 +228,109 @@ if (viewer.renderer) {
     } | null)
     tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
     tapInteractions.setConfig({ enabled: true })
+    idleEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    timeEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    interpretiveEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    
+    // Start idle effects
+    idleEffects.start()
+    
+    // Start motion effects (if on mobile)
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    if (isMobile) {
+      motionEffects.enable()
+    }
+    
+    // Start time effects update loop
+    const updateTimeEffects = () => {
+      timeEffects.update()
+      
+      // Apply slow time factor to overlay
+      const slowTimeFactor = timeEffects.getSlowTimeFactor()
+      splatTransitionOverlay.setSlowTimeFactor(slowTimeFactor)
+      
+      requestAnimationFrame(updateTimeEffects)
+    }
+    updateTimeEffects()
+    
+    // Start governor cleanup loop
+    const cleanupGovernor = () => {
+      effectGovernor.cleanup()
+      requestAnimationFrame(cleanupGovernor)
+    }
+    cleanupGovernor()
+    
+    // Wire slow time activation
+    document.addEventListener('slow-time-activate', () => {
+      timeEffects.activateSlowTime()
+    })
+    
+    // Wire density highlight (trigger on double-tap + hold)
+    document.addEventListener('density-highlight-activate', () => {
+      interpretiveEffects.activateDensityHighlight()
+    })
+    
+    // Setup debug overlay (temporary)
+    setupEffectDebugOverlay()
   }, 0)
+  
+  // Debug overlay setup
+  const setupEffectDebugOverlay = () => {
+    const debugCanvas = document.createElement('canvas')
+    debugCanvas.id = 'effect-debug-overlay'
+    debugCanvas.style.position = 'fixed'
+    debugCanvas.style.top = '10px'
+    debugCanvas.style.right = '10px'
+    debugCanvas.style.width = '200px'
+    debugCanvas.style.height = '150px'
+    debugCanvas.style.background = 'rgba(0, 0, 0, 0.8)'
+    debugCanvas.style.color = '#fff'
+    debugCanvas.style.font = '11px monospace'
+    debugCanvas.style.padding = '10px'
+    debugCanvas.style.zIndex = '1000'
+    debugCanvas.style.pointerEvents = 'none'
+    debugCanvas.style.display = 'none' // Hidden by default
+    document.body.appendChild(debugCanvas)
+    
+    // Toggle with 'D' key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'd' || e.key === 'D') {
+        const isVisible = debugCanvas.style.display !== 'none'
+        debugCanvas.style.display = isVisible ? 'none' : 'block'
+        effectGovernor.setDebug(!isVisible, (effects) => {
+          const ctx = debugCanvas.getContext('2d')
+          if (!ctx) return
+          
+          const W = debugCanvas.width = 200
+          const H = debugCanvas.height = 150
+          ctx.clearRect(0, 0, W, H)
+          ctx.fillStyle = '#000'
+          ctx.fillRect(0, 0, W, H)
+          ctx.fillStyle = '#fff'
+          ctx.font = '11px monospace'
+          
+          let y = 20
+          ctx.fillText('Active Effects:', 10, y)
+          y += 18
+          
+          if (effects.length === 0) {
+            ctx.fillText('  (none)', 10, y)
+          } else {
+            for (const effect of effects) {
+              const age = ((performance.now() - effect.startTime) / 1000).toFixed(1)
+              ctx.fillText(`  ${effect.id}`, 10, y)
+              ctx.fillText(`${(effect.intensity * 100).toFixed(0)}%`, 120, y)
+              ctx.fillText(`${age}s`, 160, y)
+              y += 16
+            }
+          }
+          
+          y += 10
+          ctx.fillText(`Total: ${effectGovernor.getTotalIntensity().toFixed(2)}`, 10, y)
+        })
+      }
+    })
+  }
 }
 
 // Color sampler for Recenter button
@@ -247,7 +367,15 @@ const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null, null
 const effectsController = new EffectsController(splatTransitionOverlay)
 const discovery = new Discovery()
 const tapReveal = new TapReveal()
-const tapInteractions = new TapInteractions(splatTransitionOverlay)
+
+// Discovery Effects System
+const effectGovernor = new EffectGovernor()
+const idleEffects = new IdleEffects(splatTransitionOverlay, effectGovernor)
+const motionEffects = new MotionEffects(effectGovernor)
+const timeEffects = new TimeEffects(splatTransitionOverlay, effectGovernor)
+const interpretiveEffects = new InterpretiveEffects(splatTransitionOverlay, effectGovernor)
+const tapInteractions = new TapInteractions(splatTransitionOverlay, effectGovernor)
+
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
 
