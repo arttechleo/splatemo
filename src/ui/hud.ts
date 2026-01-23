@@ -34,6 +34,9 @@ export const createHUD = () => {
       <button class="hud__button hud__button--bookmark" type="button" aria-label="Bookmark">
         <span class="hud__icon">🔖</span>
       </button>
+      <button class="hud__button hud__button--reset" type="button" aria-label="Reset View">
+        <span class="hud__icon">⌂</span>
+      </button>
     </div>
 
     <div class="hud__caption">
@@ -221,5 +224,25 @@ export const createHUD = () => {
     }
   }
 
-  return { element: hud, showErrorToast, showLoading, hideLoading }
+  // Reset view button
+  const resetButton = hud.querySelector<HTMLButtonElement>('.hud__button--reset')
+  let onReset: (() => void) | null = null
+
+  if (resetButton) {
+    resetButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (onReset) {
+        onReset()
+      }
+    })
+    resetButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+
+  const setResetHandler = (handler: () => void) => {
+    onReset = handler
+  }
+
+  return { element: hud, showErrorToast, showLoading, hideLoading, setResetHandler }
 }

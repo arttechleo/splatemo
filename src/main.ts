@@ -138,6 +138,26 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   // Hide loading indicator when mesh is visible
   hideLoading()
   
+  // Capture default camera state on first splat load
+  if (defaultCameraPosition === null) {
+    const camera = viewer.camera
+    const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+    if (camera) {
+      defaultCameraPosition = camera.position.clone()
+      defaultCameraDistance = controls?.target
+        ? camera.position.distanceTo(controls.target)
+        : 6
+      defaultCameraTarget = controls?.target ? controls.target.clone() : new THREE.Vector3(0, 0, 0)
+      if (defaultCameraPosition) {
+        console.log('[INIT] Default camera state captured', {
+          position: defaultCameraPosition.toArray(),
+          target: defaultCameraTarget.toArray(),
+          distance: defaultCameraDistance,
+        })
+      }
+    }
+  }
+  
   startRevealTransition()
   assertSplatVisibility('onSplatMeshChanged')
 })
@@ -399,6 +419,41 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
   }
 }
 
+// Default camera state (captured after first splat loads)
+let defaultCameraPosition: THREE.Vector3 | null = null
+let defaultCameraTarget: THREE.Vector3 | null = null
+let defaultCameraDistance = 6
+
+const resetView = () => {
+  const camera = viewer.camera
+  const controls = viewer.controls as unknown as {
+    target?: THREE.Vector3
+    update?: () => void
+    enabled?: boolean
+  } | null
+
+  if (!camera || !controls) return
+
+  // Use stored defaults or fallback to initial values
+  const target = defaultCameraTarget || new THREE.Vector3(0, 0, 0)
+  const distance = defaultCameraDistance || 6
+  const position = defaultCameraPosition || new THREE.Vector3(0, 0, distance)
+
+  // Reset camera position
+  camera.position.copy(position)
+  if (controls.target) {
+    controls.target.copy(target)
+  }
+  camera.lookAt(target)
+
+  // Update controls
+  if (controls.update) {
+    controls.update()
+  }
+
+  console.log('[RESET] View restored to default')
+}
+
 const setupOrbitControls = () => {
   if (!viewer.controls) return
   const controls = viewer.controls as unknown as {
@@ -409,12 +464,22 @@ const setupOrbitControls = () => {
     dampingFactor: number
     addEventListener: (event: string, callback: () => void) => void
     target: THREE.Vector3
+    minDistance?: number
+    maxDistance?: number
   }
   controls.enableDamping = true
   controls.dampingFactor = 0.08
   viewer.controls.enableZoom = false
   viewer.controls.enablePan = false
   viewer.controls.enableRotate = true
+  
+  // Set wider zoom bounds for OrbitControls if available
+  if (typeof controls.minDistance === 'number') {
+    controls.minDistance = 0.8
+  }
+  if (typeof controls.maxDistance === 'number') {
+    controls.maxDistance = 20
+  }
   // Removed excessive orbit change logging - was firing every frame during damping
 }
 
@@ -745,8 +810,8 @@ const setupSplatNavigation = () => {
   let initialCameraDistance = 0
   let initialOrbitAngle = 0
   let initialOrbitPitch = 0
-  const MIN_DISTANCE = 1.5
-  const MAX_DISTANCE = 12
+  const MIN_DISTANCE = 0.8
+  const MAX_DISTANCE = 20
   const ZOOM_SENSITIVITY = 0.015
   const ORBIT_SENSITIVITY = 0.008
   const PITCH_MAX = 15 * (Math.PI / 180) // 15 degrees in radians
@@ -915,6 +980,8 @@ const setupSplatNavigation = () => {
         if (DEBUG_PINCH_ZOOM) {
           const actualDistance = getCameraDistance()
           console.log('[PINCH]', {
+            minDistance: MIN_DISTANCE,
+            maxDistance: MAX_DISTANCE,
             initialPinch: initialPinchDistance.toFixed(1),
             currentPinch: currentDistance.toFixed(1),
             delta: distanceDelta.toFixed(1),
@@ -1140,6 +1207,7 @@ const start = async () => {
   setupOrbitStabilization()
   setupPoseSnapping()
   setupSplatNavigation()
+  hudResult.setResetHandler(resetView)
   viewer.start()
   
   const camera = viewer.camera
