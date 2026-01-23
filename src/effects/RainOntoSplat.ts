@@ -725,7 +725,8 @@ export class RainOntoSplat {
       // Project to screen for impact check
       const projected = this.projectToScreen(droplet)
       
-      // Check impact (requires z progress + mask hit)
+      // Check impact (temporarily remove z-gating for validation)
+      // TODO: Re-enable z-gating once hits are confirmed: droplet.z >= this.Z_IMPACT_THRESHOLD &&
       if (mask && this.checkImpact(projected.screenX, projected.screenY, droplet.z)) {
         // Impact detected!
         droplet.hasImpacted = true
@@ -974,7 +975,7 @@ export class RainOntoSplat {
     this.ctx.fillStyle = '#fff'
     this.ctx.font = '12px monospace'
     let yPos = 28
-    this.ctx.fillText(`Mask Coverage: ${(this.debugStats.maskCoverage * 100).toFixed(2)}%`, 15, yPos)
+    this.ctx.fillText(`Mask Coverage: ${(this.debugStats.maskCoverage * 100).toFixed(2)}% (LIVE)`, 15, yPos)
     yPos += 18
     this.ctx.fillText(`Mask Pixels: ${this.debugStats.maskNonZeroCount}/${this.debugStats.maskTotalPixels}`, 15, yPos)
     yPos += 18
@@ -1000,6 +1001,15 @@ export class RainOntoSplat {
     // Clear canvas
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height)
     
+    // SANITY CHECK 1: Prove overlay renders at all
+    this.drawSanityCheckOverlay()
+    
+    // SANITY CHECK 2: Prove we have source canvas
+    this.drawSourceCanvasDebug()
+    
+    // SANITY CHECK 3: Prove snapshot sampling works
+    this.drawSnapshotPreview()
+    
     // Update droplets and streaks
     this.updateDroplets(deltaTime)
     this.updateStreaks(deltaTime)
@@ -1020,6 +1030,154 @@ export class RainOntoSplat {
     }
     
     this.rafId = requestAnimationFrame(this.animate)
+  }
+  
+  private debugCircleX = 0
+  private debugCircleDirection = 1
+  
+  private drawSanityCheckOverlay(): void {
+    if (!this.ctx) return
+    
+    const W = window.innerWidth
+    const H = window.innerHeight
+    
+    // Draw "RAIN OVERLAY ACTIVE" text at top-left
+    this.ctx.save()
+    this.ctx.fillStyle = 'rgba(255, 0, 0, 0.9)'
+    this.ctx.font = 'bold 24px monospace'
+    this.ctx.fillText('RAIN OVERLAY ACTIVE', 20, 40)
+    this.ctx.restore()
+    
+    // Draw animated circle moving across screen
+    this.debugCircleX += 2 * this.debugCircleDirection
+    if (this.debugCircleX > W - 50) {
+      this.debugCircleX = W - 50
+      this.debugCircleDirection = -1
+    } else if (this.debugCircleX < 50) {
+      this.debugCircleX = 50
+      this.debugCircleDirection = 1
+    }
+    
+    this.ctx.save()
+    this.ctx.fillStyle = 'rgba(0, 255, 255, 0.8)'
+    this.ctx.beginPath()
+    this.ctx.arc(this.debugCircleX, H / 2, 30, 0, Math.PI * 2)
+    this.ctx.fill()
+    this.ctx.strokeStyle = 'rgba(255, 255, 255, 1)'
+    this.ctx.lineWidth = 3
+    this.ctx.stroke()
+    this.ctx.restore()
+  }
+  
+  private lastSourceCanvasLog = 0
+  
+  private drawSourceCanvasDebug(): void {
+    if (!this.ctx) return
+    
+    const now = performance.now()
+    if (now - this.lastSourceCanvasLog < 1000) return // Log once per second
+    this.lastSourceCanvasLog = now
+    
+    // Log to console
+    if (this.sourceCanvas) {
+      console.log('[RAIN_ONTO_SPLAT] Source canvas:', {
+        width: this.sourceCanvas.width,
+        height: this.sourceCanvas.height,
+        tagName: this.sourceCanvas.tagName,
+        className: this.sourceCanvas.className,
+        isWebGLCanvas: this.sourceCanvas.tagName === 'CANVAS',
+      })
+    } else {
+      console.warn('[RAIN_ONTO_SPLAT] Source canvas is NULL')
+    }
+    
+    // Draw debug panel
+    const W = window.innerWidth
+    this.ctx.save()
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
+    this.ctx.fillRect(W - 250, 10, 240, 80)
+    this.ctx.fillStyle = '#fff'
+    this.ctx.font = '11px monospace'
+    
+    if (this.sourceCanvas) {
+      this.ctx.fillText(`Canvas: ${this.sourceCanvas.width}×${this.sourceCanvas.height}`, W - 245, 28)
+      this.ctx.fillText(`Type: ${this.sourceCanvas.tagName}`, W - 245, 46)
+      this.ctx.fillText(`WebGL: ${this.sourceCanvas.tagName === 'CANVAS' ? 'YES' : 'NO'}`, W - 245, 64)
+    } else {
+      this.ctx.fillText('Canvas: NULL', W - 245, 28)
+    }
+    this.ctx.restore()
+  }
+  
+  private snapshotThumbnail: HTMLCanvasElement | null = null
+  private lastSnapshotCapture = 0
+  
+  private drawSnapshotPreview(): void {
+    if (!this.ctx || !this.sourceCanvas) return
+    
+    const now = performance.now()
+    const SNAPSHOT_INTERVAL = 200 // Capture every 200ms
+    
+    // Capture snapshot if needed
+    if (now - this.lastSnapshotCapture >= SNAPSHOT_INTERVAL) {
+      try {
+        const thumbW = 120
+        const thumbH = 80
+        const sourceW = this.sourceCanvas.width
+        const sourceH = this.sourceCanvas.height
+        
+        if (sourceW > 0 && sourceH > 0) {
+          this.snapshotThumbnail = document.createElement('canvas')
+          this.snapshotThumbnail.width = thumbW
+          this.snapshotThumbnail.height = thumbH
+          const thumbCtx = this.snapshotThumbnail.getContext('2d', { alpha: true })
+          
+          if (thumbCtx) {
+            // Try to draw source canvas to thumbnail
+            try {
+              thumbCtx.drawImage(this.sourceCanvas, 0, 0, sourceW, sourceH, 0, 0, thumbW, thumbH)
+            } catch (error) {
+              console.warn('[RAIN_ONTO_SPLAT] Snapshot capture failed (tainted?):', error)
+              // Draw error indicator
+              thumbCtx.fillStyle = 'rgba(255, 0, 0, 0.5)'
+              thumbCtx.fillRect(0, 0, thumbW, thumbH)
+              thumbCtx.fillStyle = '#fff'
+              thumbCtx.font = '10px monospace'
+              thumbCtx.fillText('CAPTURE FAILED', 5, thumbH / 2)
+            }
+          }
+        }
+        
+        this.lastSnapshotCapture = now
+      } catch (error) {
+        console.warn('[RAIN_ONTO_SPLAT] Snapshot creation error:', error)
+      }
+    }
+    
+    // Draw thumbnail preview
+    if (this.snapshotThumbnail) {
+      const W = window.innerWidth
+      const H = window.innerHeight
+      const thumbW = 120
+      const thumbH = 80
+      
+      // Draw border
+      this.ctx.save()
+      this.ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)'
+      this.ctx.lineWidth = 2
+      this.ctx.strokeRect(W - thumbW - 20, H - thumbH - 20, thumbW, thumbH)
+      
+      // Draw thumbnail
+      this.ctx.drawImage(this.snapshotThumbnail, W - thumbW - 20, H - thumbH - 20, thumbW, thumbH)
+      
+      // Draw label
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+      this.ctx.fillRect(W - thumbW - 20, H - thumbH - 40, thumbW, 18)
+      this.ctx.fillStyle = '#fff'
+      this.ctx.font = '10px monospace'
+      this.ctx.fillText('Snapshot Preview', W - thumbW - 18, H - thumbH - 26)
+      this.ctx.restore()
+    }
   }
   
   destroy(): void {

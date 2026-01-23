@@ -9,6 +9,8 @@ import { AudioPulseDriver } from './effects/AudioPulseDriver'
 import { OffAxisCamera } from './effects/OffAxisCamera'
 import { ColorSampler } from './effects/ColorSampler'
 import { EffectsController } from './effects/EffectsController'
+import { Discovery } from './effects/Discovery'
+import { TapReveal } from './effects/TapReveal'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -100,6 +102,39 @@ hudResult.setEffectsConfigChangeHandler((config) => {
     intensityPreset: (config.intensityPreset as any) || 'medium',
     boost: config.boost || 1.0,
   })
+  
+  // Apply discovery mode effects
+  const discoveryConfig = discovery.getConfig()
+  if (discoveryConfig.mode === 'calm') {
+    // Calm mode: effects off or subtle
+    if (config.preset !== 'none') {
+      effectsController.setConfig({ intensity: config.intensity * 0.3 })
+    }
+  } else if (discoveryConfig.mode === 'vivid') {
+    // Vivid mode: effects intensity up
+    if (config.preset !== 'none') {
+      effectsController.setConfig({ intensity: Math.min(1.0, config.intensity * 1.5) })
+    }
+  }
+})
+
+hudResult.setDiscoveryModeChangeHandler((mode: string) => {
+  discovery.setConfig({ mode: mode as any, enabled: true })
+  
+  // Apply mode-specific effects
+  const effectsConfig = effectsController.getConfig()
+  if (mode === 'calm' && effectsConfig.enabled) {
+    effectsController.setConfig({ intensity: effectsConfig.intensity * 0.3 })
+  } else if (mode === 'vivid' && effectsConfig.enabled) {
+    effectsController.setConfig({ intensity: Math.min(1.0, effectsConfig.intensity * 1.5) })
+  }
+  
+  // Enable/disable tap reveal
+  tapReveal.setEnabled(mode === 'inspect')
+})
+
+hudResult.setNextPoseHandler(() => {
+  discovery.nextPose()
 })
 
 const poster = document.createElement('div')
@@ -164,6 +199,14 @@ if (viewer.renderer) {
     audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
+    discovery.setCamera(viewer.camera, viewer.controls as {
+      target?: THREE.Vector3
+      enableZoom?: boolean
+      minDistance?: number
+      maxDistance?: number
+      autoRotate?: boolean
+      autoRotateSpeed?: number
+    } | null)
   }, 0)
 }
 
@@ -199,6 +242,8 @@ const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null, null, null)
 const effectsController = new EffectsController(splatTransitionOverlay)
+const discovery = new Discovery()
+const tapReveal = new TapReveal()
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
 
@@ -215,6 +260,14 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   
   // Update camera reference for effects (for parallax)
   effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
+  discovery.setCamera(viewer.camera, viewer.controls as {
+    target?: THREE.Vector3
+    enableZoom?: boolean
+    minDistance?: number
+    maxDistance?: number
+    autoRotate?: boolean
+    autoRotateSpeed?: number
+  } | null)
   
   // Handle scene removal (splatMesh is null/undefined)
   if (!splatMesh) {

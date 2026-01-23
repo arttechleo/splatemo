@@ -793,7 +793,47 @@ canvas {
   transform: translateY(-50%) translateX(0);
 }
 
-.hud__effects-header {
+.hud__discovery-panel {
+  position: fixed;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%) translateX(120%);
+  background: rgba(20, 20, 25, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  min-width: 240px;
+  max-width: 280px;
+  pointer-events: auto;
+  z-index: 25;
+  box-shadow: var(--glass-shadow), var(--glass-glow);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@supports not (backdrop-filter: blur(20px)) {
+  .hud__discovery-panel {
+    background: rgba(20, 20, 25, 0.95);
+  }
+}
+
+.hud__discovery-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-highlight);
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.hud__discovery-panel--visible {
+  transform: translateY(-50%) translateX(0);
+}
+
+.hud__effects-header,
+.hud__discovery-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -837,7 +877,8 @@ canvas {
   transform: scale(0.9);
 }
 
-.hud__effects-content {
+.hud__effects-content,
+.hud__discovery-content {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -845,13 +886,15 @@ canvas {
   z-index: 1;
 }
 
-.hud__effects-control {
+.hud__effects-control,
+.hud__discovery-control {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 
-.hud__effects-label {
+.hud__effects-label,
+.hud__discovery-label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
@@ -859,7 +902,8 @@ canvas {
   letter-spacing: 0.5px;
 }
 
-.hud__effects-select {
+.hud__effects-select,
+.hud__discovery-select {
   background: rgba(255, 255, 255, var(--glass-opacity));
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -881,12 +925,14 @@ canvas {
 }
 
 @supports not (backdrop-filter: blur(20px)) {
-  .hud__effects-select {
+  .hud__effects-select,
+  .hud__discovery-select {
     background: rgba(30, 30, 30, 0.9);
   }
 }
 
-.hud__effects-select:focus {
+.hud__effects-select:focus,
+.hud__discovery-select:focus {
   outline: none;
   border-color: rgba(255, 255, 255, 0.3);
   box-shadow: var(--glass-shadow), 0 0 0 2px rgba(255, 255, 255, 0.1);
