@@ -37,6 +37,9 @@ export const createHUD = () => {
       <button class="hud__button hud__button--reset" type="button" aria-label="Reset View">
         <span class="hud__icon">⌂</span>
       </button>
+      <button class="hud__button hud__button--sound" type="button" aria-label="Sound">
+        <span class="hud__icon">🔊</span>
+      </button>
     </div>
 
     <div class="hud__caption">
@@ -244,5 +247,35 @@ export const createHUD = () => {
     onReset = handler
   }
 
-  return { element: hud, showErrorToast, showLoading, hideLoading, setResetHandler }
+  // Sound button
+  const soundButton = hud.querySelector<HTMLButtonElement>('.hud__button--sound')
+  let onSoundToggle: ((enabled: boolean) => void) | null = null
+  let isSoundEnabled = false
+
+  if (soundButton) {
+    soundButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      isSoundEnabled = !isSoundEnabled
+      soundButton.classList.toggle('hud__button--active', isSoundEnabled)
+      if (onSoundToggle) {
+        onSoundToggle(isSoundEnabled)
+      }
+    })
+    soundButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+
+  const setSoundToggleHandler = (handler: (enabled: boolean) => void) => {
+    onSoundToggle = handler
+  }
+
+  return {
+    element: hud,
+    showErrorToast,
+    showLoading,
+    hideLoading,
+    setResetHandler,
+    setSoundToggleHandler,
+  }
 }

@@ -4,6 +4,7 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d'
 import { AnnotationManager, type Annotation } from './annotations/AnnotationManager'
 import { ParticleDisintegration } from './transitions/ParticleDisintegration'
 import { SplatTransitionOverlay } from './transitions/SplatTransitionOverlay'
+import { AudioWavelength } from './effects/AudioWavelength'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -22,6 +23,21 @@ app.appendChild(hud)
 const showErrorToast = hudResult.showErrorToast
 const showLoading = hudResult.showLoading
 const hideLoading = hudResult.hideLoading
+hudResult.setSoundToggleHandler(async (enabled: boolean) => {
+  if (enabled) {
+    const success = await audioWavelength.enable()
+    if (!success) {
+      showErrorToast('Microphone access required for audio-reactive effect')
+      // Reset button state
+      const soundButton = hud.querySelector<HTMLButtonElement>('.hud__button--sound')
+      if (soundButton) {
+        soundButton.classList.remove('hud__button--active')
+      }
+    }
+  } else {
+    audioWavelength.disable()
+  }
+})
 
 const poster = document.createElement('div')
 poster.className = 'poster'
@@ -108,6 +124,7 @@ let currentSplatMesh:
 
 const particleSystem = new ParticleDisintegration(threeScene)
 const splatTransitionOverlay = new SplatTransitionOverlay(app)
+const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
@@ -746,6 +763,9 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
 
   const sourceCanvas = viewer.renderer?.domElement ?? null
 
+  // Pause audio effect during transition
+  audioWavelength.pause()
+
   if (isMobile) {
     splatTransitionOverlay.startTransition(
       direction === 'next' ? 'up' : 'down',
@@ -772,6 +792,8 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
+    // Resume audio effect after transition
+    audioWavelength.resume()
   }
   requestAnimationFrame(tick)
 }
