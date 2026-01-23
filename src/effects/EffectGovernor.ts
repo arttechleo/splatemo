@@ -24,6 +24,7 @@ export class EffectGovernor {
   private maxSecondary = 2
   private globalIntensityCap = 0.85 // Max combined intensity (increased in Vivid mode)
   private vividMode = false
+  private maxSimultaneousOverlays = 3 // Cap simultaneous overlays in Vivid mode to avoid chaos
   
   // Priority order (higher = more important)
   private readonly PRIORITY_ORDER: Record<EffectPriority, number> = {
@@ -141,6 +142,25 @@ export class EffectGovernor {
               this.PRIORITY_ORDER[existing.priority] < this.PRIORITY_ORDER[effect.priority]) {
             existing.intensity *= 0.7
           }
+        }
+      }
+    }
+    
+    // In Vivid mode, cap simultaneous overlays to avoid chaos
+    if (this.vividMode && this.activeEffects.size > this.maxSimultaneousOverlays) {
+      // Suppress oldest lower priority effects
+      const sortedEffects = Array.from(this.activeEffects.values())
+        .filter(e => !e.userTriggered)
+        .sort((a, b) => {
+          const priorityDiff = this.PRIORITY_ORDER[a.priority] - this.PRIORITY_ORDER[b.priority]
+          if (priorityDiff !== 0) return priorityDiff
+          return a.startTime - b.startTime
+        })
+      
+      while (this.activeEffects.size > this.maxSimultaneousOverlays && sortedEffects.length > 0) {
+        const toSuppress = sortedEffects.shift()
+        if (toSuppress) {
+          this.suppressEffect(toSuppress.id)
         }
       }
     }

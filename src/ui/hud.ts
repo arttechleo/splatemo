@@ -173,10 +173,25 @@ export const createHUD = () => {
   const commentForm = hud.querySelector<HTMLFormElement>('.hud__comment-form')
   const toast = hud.querySelector<HTMLDivElement>('.hud__toast')
 
+  // Micro-feedback handlers (declared at top level for scope)
+  let likeMicroFeedbackHandler: ((type: 'like' | 'save' | 'share' | 'comment' | 'recenter', element: HTMLElement, x?: number, y?: number) => void) | null = null
+  let bookmarkMicroFeedbackHandler: ((type: 'like' | 'save' | 'share' | 'comment' | 'recenter', element: HTMLElement, x?: number, y?: number) => void) | null = null
+  let commentMicroFeedbackHandler: ((type: 'like' | 'save' | 'share' | 'comment' | 'recenter', element: HTMLElement, x?: number, y?: number) => void) | null = null
+  let shareMicroFeedbackHandler: ((type: 'like' | 'save' | 'share' | 'comment' | 'recenter', element: HTMLElement, x?: number, y?: number) => void) | null = null
+
   // Like handler
   if (likeButton && likeCountEl) {
     likeButton.addEventListener('click', (e) => {
       e.stopPropagation()
+      const rect = likeButton.getBoundingClientRect()
+      const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
+      const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
+      
+      // Trigger micro-feedback
+      if (likeMicroFeedbackHandler) {
+        likeMicroFeedbackHandler('like', likeButton, tapX, tapY)
+      }
+      
       isLiked = !isLiked
       likeCount += isLiked ? 1 : -1
       likeCountEl.textContent = String(likeCount)
@@ -229,10 +244,66 @@ export const createHUD = () => {
   if (bookmarkButton) {
     bookmarkButton.addEventListener('click', (e) => {
       e.stopPropagation()
+      const rect = bookmarkButton.getBoundingClientRect()
+      const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
+      const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
+      
+      // Trigger micro-feedback
+      if (bookmarkMicroFeedbackHandler) {
+        bookmarkMicroFeedbackHandler('save', bookmarkButton, tapX, tapY)
+      }
+      
       isBookmarked = !isBookmarked
       bookmarkButton.classList.toggle('hud__button--active', isBookmarked)
     })
     bookmarkButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+  
+  // Comment button handler
+  if (commentButton) {
+    commentButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const rect = commentButton.getBoundingClientRect()
+      const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
+      const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
+      
+      // Trigger micro-feedback
+      if (commentMicroFeedbackHandler) {
+        commentMicroFeedbackHandler('comment', commentButton, tapX, tapY)
+      }
+      
+      isCommentOpen = !isCommentOpen
+      if (commentPanel) {
+        commentPanel.classList.toggle('hud__comment-panel--open', isCommentOpen)
+      }
+      commentButton.classList.toggle('hud__button--active', isCommentOpen)
+    })
+    commentButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+  
+  // Repost/Share button handler
+  if (repostButton && toast) {
+    repostButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const rect = repostButton.getBoundingClientRect()
+      const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
+      const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
+      
+      // Trigger micro-feedback
+      if (shareMicroFeedbackHandler) {
+        shareMicroFeedbackHandler('share', repostButton, tapX, tapY)
+      }
+      
+      toast.classList.add('hud__toast--show')
+      setTimeout(() => {
+        toast.classList.remove('hud__toast--show')
+      }, 2000)
+    })
+    repostButton.addEventListener('pointerdown', (e) => {
       e.stopPropagation()
     })
   }
@@ -612,5 +683,12 @@ export const createHUD = () => {
     setVividModeToggleHandler,
     getVividMode,
     updateOffAxisStatus,
+    setMicroFeedbackHandler: (handler: (type: 'like' | 'save' | 'share' | 'comment' | 'recenter', element: HTMLElement, x?: number, y?: number) => void) => {
+      // Wire to all buttons
+      likeMicroFeedbackHandler = handler
+      bookmarkMicroFeedbackHandler = handler
+      commentMicroFeedbackHandler = handler
+      shareMicroFeedbackHandler = handler
+    },
   }
 }

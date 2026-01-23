@@ -18,11 +18,13 @@ export class IdleEffects {
   private lastInteractionTime = 0
   private readonly IDLE_THRESHOLD = 1200 // 1.2 seconds of inactivity (reduced for visibility)
   private isIdle = false
+  private normalMode = true // Track if in normal mode (reduced effects)
   
   // Breathing effect
   private breathingPhase = 0
   private breathingSpeed = 0.003 // Slightly faster for visibility
   private breathingBaseIntensity = 0.25 // Increased from 0.15
+  private breathingNormalIntensity = 0.12 // Reduced intensity for normal mode
   
   // Attention shimmer
   private shimmerPhase = 0
@@ -49,6 +51,17 @@ export class IdleEffects {
   
   setSourceCanvas(canvas: HTMLCanvasElement | null): void {
     this.sourceCanvas = canvas
+  }
+  
+  /**
+   * Set normal mode (reduced effects for clean UI feel).
+   */
+  setNormalMode(enabled: boolean): void {
+    this.normalMode = enabled
+    // If in normal mode and effects are active, reduce intensity
+    if (enabled && this.governor.isActive('idle-breathing')) {
+      this.governor.updateIntensity('idle-breathing', this.breathingNormalIntensity)
+    }
   }
   
   start(): void {
@@ -94,8 +107,9 @@ export class IdleEffects {
       this.breathingPhase += this.breathingSpeed
       this.shimmerPhase += this.shimmerSpeed
       
-      // Update breathing intensity (more visible)
-      const breathingIntensity = this.breathingBaseIntensity + Math.sin(this.breathingPhase) * 0.1 // 0.15-0.35
+      // Update breathing intensity (reduced in normal mode for clean UI)
+      const baseIntensity = this.normalMode ? this.breathingNormalIntensity : this.breathingBaseIntensity
+      const breathingIntensity = baseIntensity + Math.sin(this.breathingPhase) * (this.normalMode ? 0.03 : 0.1)
       this.governor.updateIntensity('idle-breathing', breathingIntensity)
       
       // Update shimmer (continuous, not random)
@@ -106,11 +120,12 @@ export class IdleEffects {
   }
   
   private activateBreathing(): void {
+    const initialIntensity = this.normalMode ? this.breathingNormalIntensity : this.breathingBaseIntensity
     const effect: ActiveEffect = {
       id: 'idle-breathing',
       type: 'secondary',
       priority: 'idle',
-      intensity: this.breathingBaseIntensity,
+      intensity: initialIntensity,
       startTime: performance.now(),
       userTriggered: false,
     }
@@ -140,9 +155,12 @@ export class IdleEffects {
   private updateShimmer(now: number): void {
     if (!this.sourceCanvas || !this.governor.isActive('idle-shimmer')) return
     
-    // Continuous low-amplitude shimmer (not random)
+    // Continuous low-amplitude shimmer (reduced in normal mode)
     if (now - this.shimmerLastUpdate >= this.SHIMMER_INTERVAL) {
       this.shimmerLastUpdate = now
+      
+      // Skip shimmer in normal mode for clean UI feel
+      if (this.normalMode) return
       
       const H = window.innerHeight
       const centerY = H / 2 + Math.sin(this.shimmerPhase) * (H * 0.05) // Subtle vertical movement

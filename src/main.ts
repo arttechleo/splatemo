@@ -18,6 +18,7 @@ import { MotionEffects } from './effects/MotionEffects'
 import { TimeEffects } from './effects/TimeEffects'
 import { InterpretiveEffects } from './effects/InterpretiveEffects'
 import { DiscoveryOnboarding } from './effects/DiscoveryOnboarding'
+import { MicroFeedback } from './effects/MicroFeedback'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -163,6 +164,9 @@ hudResult.setVividModeToggleHandler((enabled: boolean) => {
   // Apply vivid multiplier to overlay
   const vividMultiplier = effectGovernor.getVividMultiplier()
   splatTransitionOverlay.setVividMultiplier(vividMultiplier)
+  
+  // Set normal mode for idle effects (reduced in normal mode)
+  idleEffects.setNormalMode(!enabled)
   
   // Boost existing effects
   if (enabled) {
@@ -407,6 +411,7 @@ const timeEffects = new TimeEffects(splatTransitionOverlay, effectGovernor)
 const interpretiveEffects = new InterpretiveEffects(splatTransitionOverlay, effectGovernor)
 const tapInteractions = new TapInteractions(splatTransitionOverlay, effectGovernor)
 const discoveryOnboarding = new DiscoveryOnboarding()
+const microFeedback = new MicroFeedback(splatTransitionOverlay)
 
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
@@ -1480,13 +1485,22 @@ const setupSplatNavigation = () => {
 
       const deltaY = totalDeltaY
       const deltaTime = performance.now() - touchStartTime
-      const velocity = Math.abs(deltaY) / deltaTime
+      const velocity = Math.abs(deltaY) / Math.max(deltaTime, 1) // Avoid division by zero
 
-      // Only trigger feed navigation if:
-      // 1. Gesture was locked to vertical, AND
-      // 2. Distance exceeds threshold OR velocity exceeds threshold
+      // Instagram-style sticky feed: only trigger if gesture was locked to vertical
+      // AND (distance exceeds threshold OR velocity exceeds threshold)
       if (gestureLock === 'vertical' && (Math.abs(deltaY) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
         event.preventDefault()
+        
+        // Subtle haptic for feed snap
+        if ('vibrate' in navigator) {
+          try {
+            navigator.vibrate(5) // 5ms subtle haptic
+          } catch {
+            // Haptics not supported
+          }
+        }
+        
         void navigateSplat(deltaY > 0 ? 'prev' : 'next', deltaY)
       }
 
@@ -1538,8 +1552,41 @@ const start = async () => {
   setupOrbitStabilization()
   setupPoseSnapping()
   setupSplatNavigation()
-  hudResult.setResetHandler(resetView)
-  tapInteractions.setResetHandler(resetView)
+  
+  // Wire reset handler with micro-feedback
+  const resetButton = hud.querySelector<HTMLButtonElement>('.hud__button--reset')
+  if (resetButton) {
+    resetButton.addEventListener('click', (e) => {
+      const rect = resetButton.getBoundingClientRect()
+      const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
+      const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
+      microFeedback.trigger('recenter', resetButton, tapX, tapY)
+      resetView()
+    })
+  }
+  
+  hudResult.setResetHandler(() => {
+    if (resetButton) {
+      const rect = resetButton.getBoundingClientRect()
+      microFeedback.trigger('recenter', resetButton, rect.left + rect.width / 2, rect.top + rect.height / 2)
+    }
+    resetView()
+  })
+  tapInteractions.setResetHandler(() => {
+    if (resetButton) {
+      const rect = resetButton.getBoundingClientRect()
+      microFeedback.trigger('recenter', resetButton, rect.left + rect.width / 2, rect.top + rect.height / 2)
+    }
+    resetView()
+  })
+  
+  // Wire micro-feedback to HUD buttons
+  hudResult.setMicroFeedbackHandler((type, element, x, y) => {
+    microFeedback.trigger(type, element, x, y)
+  })
+  
+  // Set source canvas for micro-feedback
+  microFeedback.setSourceCanvas(viewer.renderer?.domElement ?? null)
   viewer.start()
   
   const camera = viewer.camera

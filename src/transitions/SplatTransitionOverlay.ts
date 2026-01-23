@@ -20,8 +20,8 @@ type Particle = {
   glow?: number // Optional glow alpha for hero particles
 }
 
-const TRANSITION_DURATION_MS = 1200
-const TAIL_DURATION_MS = 250
+const TRANSITION_DURATION_MS = 600 // Standardized: 450-700ms range (using 600ms)
+const TAIL_DURATION_MS = 150 // Small tail for premium feel
 const MIN_PARTICLES = 1500
 const MAX_PARTICLES = 4000
 const ALPHA_THRESHOLD = 15
