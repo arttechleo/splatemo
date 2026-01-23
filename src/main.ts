@@ -17,6 +17,7 @@ import { IdleEffects } from './effects/IdleEffects'
 import { MotionEffects } from './effects/MotionEffects'
 import { TimeEffects } from './effects/TimeEffects'
 import { InterpretiveEffects } from './effects/InterpretiveEffects'
+import { DiscoveryOnboarding } from './effects/DiscoveryOnboarding'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -156,6 +157,24 @@ hudResult.setNextPoseHandler(() => {
   discovery.nextPose()
 })
 
+hudResult.setVividModeToggleHandler((enabled: boolean) => {
+  effectGovernor.setVividMode(enabled)
+  
+  // Apply vivid multiplier to overlay
+  const vividMultiplier = effectGovernor.getVividMultiplier()
+  splatTransitionOverlay.setVividMultiplier(vividMultiplier)
+  
+  // Boost existing effects
+  if (enabled) {
+    // Increase intensity of active effects
+    const activeEffects = effectGovernor.getActiveEffects()
+    for (const effect of activeEffects) {
+      const boostedIntensity = Math.min(1.0, effect.intensity * 1.3)
+      effectGovernor.updateIntensity(effect.id, boostedIntensity)
+    }
+  }
+})
+
 const poster = document.createElement('div')
 poster.className = 'poster'
 poster.innerHTML = `
@@ -243,7 +262,9 @@ if (viewer.renderer) {
     
     // Start time effects update loop
     const updateTimeEffects = () => {
+      const vividMode = effectGovernor.getVividMode()
       timeEffects.update()
+      timeEffects.checkRarePulse(vividMode)
       
       // Apply slow time factor to overlay
       const slowTimeFactor = timeEffects.getSlowTimeFactor()
@@ -270,8 +291,18 @@ if (viewer.renderer) {
       interpretiveEffects.activateDensityHighlight()
     })
     
+    // Wire user interaction tracking
+    document.addEventListener('user-interaction', () => {
+      timeEffects.recordInteraction()
+    })
+    
     // Setup debug overlay (temporary)
     setupEffectDebugOverlay()
+    
+    // Show discovery onboarding (one-time, after 1 second)
+    setTimeout(() => {
+      discoveryOnboarding.show()
+    }, 1000)
   }, 0)
   
   // Debug overlay setup
@@ -375,6 +406,7 @@ const motionEffects = new MotionEffects(effectGovernor)
 const timeEffects = new TimeEffects(splatTransitionOverlay, effectGovernor)
 const interpretiveEffects = new InterpretiveEffects(splatTransitionOverlay, effectGovernor)
 const tapInteractions = new TapInteractions(splatTransitionOverlay, effectGovernor)
+const discoveryOnboarding = new DiscoveryOnboarding()
 
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null

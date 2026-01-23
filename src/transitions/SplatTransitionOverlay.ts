@@ -48,9 +48,14 @@ export class SplatTransitionOverlay {
   private isFinishing = false
   private finishStartTime = 0
   private slowTimeFactor = 1.0 // 1.0 = normal, <1.0 = slowed
+  private vividMultiplier = 1.0 // Vivid mode multiplier
   
   setSlowTimeFactor(factor: number): void {
     this.slowTimeFactor = Math.max(0.1, Math.min(1.0, factor))
+  }
+  
+  setVividMultiplier(multiplier: number): void {
+    this.vividMultiplier = multiplier
   }
   private debugInfo: {
     mode: 'pixelSnapshot' | 'fallback'
@@ -138,8 +143,9 @@ export class SplatTransitionOverlay {
       this.overlay.style.opacity = '1'
     }
 
-    // Apply intensity multiplier for visibility boost
-    const intensityMultiplier = params.intensityMultiplier || 1.0
+    // Apply intensity multiplier for visibility boost (includes vivid mode)
+    const baseMultiplier = params.intensityMultiplier || 1.0
+    const intensityMultiplier = baseMultiplier * this.vividMultiplier
     const effectiveIntensity = Math.min(1.0, params.intensity * intensityMultiplier)
     
     // Sample particles from the specified band
@@ -220,13 +226,15 @@ export class SplatTransitionOverlay {
     const vySign = direction === 'up' ? -1 : 1
 
     // Scale particle count by intensity and multiplier (3× more particles for visibility)
+    // Apply vivid multiplier to particle count
     const baseParticleCount = Math.floor((W * bandHeight) / 200)
-    const particleCountMultiplier = 1.0 + (intensityMultiplier - 1.0) * 2.5 // Scale up particle count
+    const particleCountMultiplier = (1.0 + (intensityMultiplier - 1.0) * 2.5) * this.vividMultiplier
+    const maxParticlesPerBand = this.vividMultiplier > 1.0 ? MAX_PARTICLES : MAX_PARTICLES / 2
     const targetParticleCount = Math.max(
       Math.floor(baseParticleCount * 0.3),
       Math.min(
         Math.floor(baseParticleCount * intensity * particleCountMultiplier),
-        MAX_PARTICLES / 2 // Allow more particles per band
+        maxParticlesPerBand
       )
     )
 
@@ -251,7 +259,8 @@ export class SplatTransitionOverlay {
         const brightness = (r + g + b) / (3 * 255)
         
         // Increase particle size range (allow larger "hero" particles)
-        const baseSize = 1.5 + Math.random() * 2.5 + (1 - brightness) * 1.2
+        // Apply vivid multiplier to size
+        const baseSize = (1.5 + Math.random() * 2.5 + (1 - brightness) * 1.2) * this.vividMultiplier
         const heroChance = intensityMultiplier > 2.0 ? 0.15 : 0.05 // More hero particles at high intensity
         const isHero = Math.random() < heroChance
         const size = isHero 
@@ -259,12 +268,14 @@ export class SplatTransitionOverlay {
           : baseSize * (1.0 + (intensityMultiplier - 1.0) * 0.6) // Regular particles: slightly larger
 
         // Scale velocity by intensity (slightly faster for visibility)
-        const velocityScale = (0.6 + intensity * 0.7) * (1.0 + (intensityMultiplier - 1.0) * 0.3)
+        // Apply vivid multiplier to velocity
+        const velocityScale = (0.6 + intensity * 0.7) * (1.0 + (intensityMultiplier - 1.0) * 0.3) * this.vividMultiplier
 
         // Increase alpha for visibility (with glow effect for hero particles)
+        // Apply vivid multiplier to alpha
         const baseAlpha = a / 255
         const alphaBoost = 0.3 + (intensityMultiplier - 1.0) * 0.4 // Boost alpha by up to 70%
-        const particleAlpha = Math.min(1.0, baseAlpha * (1.0 + alphaBoost))
+        const particleAlpha = Math.min(1.0, baseAlpha * (1.0 + alphaBoost) * this.vividMultiplier)
         const glowAlpha = isHero ? particleAlpha * 1.4 : particleAlpha // Hero particles get extra glow
 
         particles.push({
@@ -322,11 +333,13 @@ export class SplatTransitionOverlay {
     const vySign = this.direction === 'up' ? -1 : 1
 
     // Adaptive particle count based on device capabilities
+    // Apply vivid multiplier
     const deviceDpr = Math.min(2, window.devicePixelRatio || 1)
     const isMobileDevice = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-    const adaptiveMax = isMobileDevice 
+    const baseMax = isMobileDevice 
       ? Math.min(MAX_PARTICLES, Math.floor((W * H) / 350)) // More particles on mobile
       : Math.min(MAX_PARTICLES * 1.2, Math.floor((W * H) / 300)) // Even more on desktop
+    const adaptiveMax = Math.floor(baseMax * this.vividMultiplier)
     
     const targetParticleCount = Math.max(
       MIN_PARTICLES,
@@ -353,15 +366,17 @@ export class SplatTransitionOverlay {
         const brightness = (r + g + b) / (3 * 255)
         
         // Increased size range with hero particles
+        // Apply vivid multiplier
         const heroChance = 0.08 // 8% chance for hero particles
         const isHero = Math.random() < heroChance
-        const baseSize = 1.5 + Math.random() * 2.8 + (1 - brightness) * 1.5
+        const baseSize = (1.5 + Math.random() * 2.8 + (1 - brightness) * 1.5) * this.vividMultiplier
         const size = isHero ? baseSize * (2.5 + Math.random() * 2.0) : baseSize
         
         // Increased alpha for visibility
+        // Apply vivid multiplier
         const baseAlpha = a / 255
         const alphaBoost = 0.4 // 40% alpha boost
-        const particleAlpha = Math.min(1.0, baseAlpha * (1.0 + alphaBoost))
+        const particleAlpha = Math.min(1.0, baseAlpha * (1.0 + alphaBoost) * this.vividMultiplier)
         const glowAlpha = isHero ? particleAlpha * 1.5 : 0
 
         this.particles.push({

@@ -297,12 +297,18 @@ export class TapInteractions {
       }
     }, 800)
     
-    // Register as primary effect
+    // Record interaction
+    const interactionEvent = new CustomEvent('user-interaction')
+    document.dispatchEvent(interactionEvent)
+    
+    // Register as primary effect (user-triggered, high priority)
     const effect: ActiveEffect = {
       id: 'touch-spotlight',
       type: 'primary',
+      priority: 'touch',
       intensity: this.config.spotlightIntensity,
       startTime: performance.now(),
+      userTriggered: true,
       onSuppress: () => {
         this.cancelHold()
       },
@@ -404,12 +410,14 @@ export class TapInteractions {
     this.isDepthScrubbing = true
     this.scrubCurrentY = y
     
-    // Register as secondary effect
+    // Register as secondary effect (user-triggered)
     const effect: ActiveEffect = {
       id: 'touch-depth-scrub',
       type: 'secondary',
+      priority: 'touch',
       intensity: 0.4,
       startTime: performance.now(),
+      userTriggered: true,
       onSuppress: () => {
         this.stopDepthScrubbing()
       },
@@ -475,13 +483,19 @@ export class TapInteractions {
     // Add memory echo
     this.addMemoryEcho(x, y)
     
-    // Register as primary effect
+    // Record interaction for rare pulse discovery
+    const event = new CustomEvent('user-interaction')
+    document.dispatchEvent(event)
+    
+    // Register as primary effect (user-triggered, high priority)
     const effect: ActiveEffect = {
       id: 'touch-ripple',
       type: 'primary',
+      priority: 'touch',
       intensity: this.config.rippleIntensity,
       startTime: performance.now(),
       duration: this.config.rippleDuration,
+      userTriggered: true, // Must not be suppressed
     }
     this.governor.registerEffect(effect)
   }
@@ -496,13 +510,19 @@ export class TapInteractions {
     const event = new CustomEvent('density-highlight-activate')
     document.dispatchEvent(event)
     
-    // Register as primary effect
+    // Record interaction
+    const interactionEvent = new CustomEvent('user-interaction')
+    document.dispatchEvent(interactionEvent)
+    
+    // Register as primary effect (user-triggered, high priority)
     const effect: ActiveEffect = {
       id: 'touch-disintegrate',
       type: 'primary',
+      priority: 'touch',
       intensity: this.config.disintegrateIntensity,
       startTime: performance.now(),
       duration: this.config.disintegrateDuration,
+      userTriggered: true,
     }
     this.governor.registerEffect(effect)
   }

@@ -18,14 +18,18 @@ export class TimeEffects {
   private slowTimeStartTime = 0
   
   // Rare pulse
-  private readonly PULSE_INTERVAL_MIN = 15000 // 15 seconds minimum
-  private readonly PULSE_INTERVAL_MAX = 45000 // 45 seconds maximum
+  private readonly PULSE_INTERVAL_MIN = 15000 // 15 seconds minimum (normal mode)
+  private readonly PULSE_INTERVAL_MAX = 45000 // 45 seconds maximum (normal mode)
+  private readonly PULSE_INTERVAL_VIVID_MIN = 6000 // 6 seconds (vivid mode)
+  private readonly PULSE_INTERVAL_VIVID_MAX = 12000 // 12 seconds (vivid mode)
   private nextPulseTime = 0
+  private interactionCount = 0 // Count user interactions for discovery
+  private readonly INTERACTIONS_FOR_PULSE = 3 // Trigger pulse after 3 interactions
   
   constructor(overlay: SplatTransitionOverlay, governor: EffectGovernor) {
     this.overlay = overlay
     this.governor = governor
-    this.scheduleNextPulse()
+    this.scheduleNextPulse(false) // Start in normal mode
   }
   
   setSourceCanvas(canvas: HTMLCanvasElement | null): void {
@@ -44,9 +48,11 @@ export class TimeEffects {
     const effect: ActiveEffect = {
       id: 'time-slow',
       type: 'primary',
+      priority: 'time',
       intensity: 0.7,
       startTime: this.slowTimeStartTime,
       duration: 3000, // 3 seconds
+      userTriggered: true, // User explicitly triggered via long-press
       onSuppress: () => {
         this.slowTimeActive = false
       },
@@ -75,18 +81,35 @@ export class TimeEffects {
   /**
    * Check for rare pulse trigger.
    */
-  checkRarePulse(): void {
+  checkRarePulse(vividMode: boolean = false): void {
     const now = performance.now()
     
+    // In normal mode: trigger after 3 interactions
+    if (!vividMode && this.interactionCount >= this.INTERACTIONS_FOR_PULSE && !this.slowTimeActive) {
+      this.triggerRarePulse()
+      this.interactionCount = 0
+      this.scheduleNextPulse(vividMode)
+      return
+    }
+    
+    // In vivid mode or after initial pulse: time-based
     if (now >= this.nextPulseTime && !this.slowTimeActive) {
       this.triggerRarePulse()
-      this.scheduleNextPulse()
+      this.scheduleNextPulse(vividMode)
     }
   }
   
-  private scheduleNextPulse(): void {
-    const interval = this.PULSE_INTERVAL_MIN + 
-      Math.random() * (this.PULSE_INTERVAL_MAX - this.PULSE_INTERVAL_MIN)
+  /**
+   * Record user interaction (for discovery pulse).
+   */
+  recordInteraction(): void {
+    this.interactionCount++
+  }
+  
+  private scheduleNextPulse(vividMode: boolean): void {
+    const min = vividMode ? this.PULSE_INTERVAL_VIVID_MIN : this.PULSE_INTERVAL_MIN
+    const max = vividMode ? this.PULSE_INTERVAL_VIVID_MAX : this.PULSE_INTERVAL_MAX
+    const interval = min + Math.random() * (max - min)
     this.nextPulseTime = performance.now() + interval
   }
   
@@ -131,9 +154,11 @@ export class TimeEffects {
     const effect: ActiveEffect = {
       id: 'time-rare-pulse',
       type: 'secondary',
+      priority: 'time',
       intensity: 0.5,
       startTime: performance.now(),
       duration: pulseDuration,
+      userTriggered: false,
     }
     this.governor.registerEffect(effect)
   }

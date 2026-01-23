@@ -114,8 +114,10 @@ export class MotionEffects {
     const effect: ActiveEffect = {
       id: 'motion-gravity-bias',
       type: 'secondary',
+      priority: 'motion',
       intensity: this.gravityBiasIntensity,
       startTime: performance.now(),
+      userTriggered: false,
       onSuppress: () => {
         this.gravityBiasActive = false
       },

@@ -50,6 +50,10 @@ export const createHUD = () => {
       <button class="hud__button hud__button--discovery" type="button" aria-label="Discovery">
         <span class="hud__icon">🎯</span>
       </button>
+      <button class="hud__button hud__button--vivid" type="button" aria-label="Vivid Mode">
+        <span class="hud__icon">✨</span>
+        <span class="hud__label">Vivid</span>
+      </button>
     </div>
     
     <div class="hud__effects-panel">
@@ -403,6 +407,10 @@ export const createHUD = () => {
   const discoveryCloseButton = hud.querySelector<HTMLButtonElement>('.hud__close--discovery')
   const discoveryModeSelect = hud.querySelector<HTMLSelectElement>('#discovery-mode')
   const nextPoseButton = hud.querySelector<HTMLButtonElement>('#next-pose-button')
+  
+  // Vivid mode button
+  const vividButton = hud.querySelector<HTMLButtonElement>('.hud__button--vivid')
+  let isVividMode = false
   const effectsCloseButton = hud.querySelector<HTMLButtonElement>('.hud__close--effects')
   const effectsPresetSelect = hud.querySelector<HTMLSelectElement>('#effects-preset')
   const effectsIntensityPresetSelect = hud.querySelector<HTMLSelectElement>('#effects-intensity-preset')
@@ -411,6 +419,7 @@ export const createHUD = () => {
   let onEffectsConfigChange: ((config: { preset: string; intensity: number; enabled: boolean; intensityPreset?: string; boost?: number }) => void) | null = null
   let onDiscoveryModeChange: ((mode: string) => void) | null = null
   let onNextPose: (() => void) | null = null
+  let onVividModeToggle: ((enabled: boolean) => void) | null = null
   let isEffectsPanelOpen = false
 
   if (effectsButton && effectsPanel) {
@@ -475,6 +484,26 @@ export const createHUD = () => {
       e.stopPropagation()
     })
   }
+  
+  if (vividButton) {
+    vividButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      isVividMode = !isVividMode
+      vividButton.classList.toggle('hud__button--active', isVividMode)
+      if (onVividModeToggle) {
+        onVividModeToggle(isVividMode)
+      }
+    })
+    vividButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+  
+  const setVividModeToggleHandler = (handler: (enabled: boolean) => void) => {
+    onVividModeToggle = handler
+  }
+  
+  const getVividMode = () => isVividMode
 
   if (effectsCloseButton && effectsPanel) {
     effectsCloseButton.addEventListener('click', (e) => {
@@ -580,6 +609,8 @@ export const createHUD = () => {
     setEffectsConfigChangeHandler,
     setDiscoveryModeChangeHandler,
     setNextPoseHandler,
+    setVividModeToggleHandler,
+    getVividMode,
     updateOffAxisStatus,
   }
 }

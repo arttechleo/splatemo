@@ -53,9 +53,11 @@ export class InterpretiveEffects {
     const effect: ActiveEffect = {
       id: 'interpretive-density',
       type: 'primary',
+      priority: 'interpretive',
       intensity: 0.6,
       startTime: performance.now(),
       duration: 2000,
+      userTriggered: true, // Triggered by double-tap
       onSuppress: () => {
         this.densityHighlightActive = false
       },

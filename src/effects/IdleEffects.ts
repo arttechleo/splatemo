@@ -16,16 +16,19 @@ export class IdleEffects {
   
   // Idle detection
   private lastInteractionTime = 0
-  private readonly IDLE_THRESHOLD = 3000 // 3 seconds of inactivity
+  private readonly IDLE_THRESHOLD = 1200 // 1.2 seconds of inactivity (reduced for visibility)
   private isIdle = false
   
   // Breathing effect
   private breathingPhase = 0
-  private breathingSpeed = 0.002 // Slow expansion/contraction
+  private breathingSpeed = 0.003 // Slightly faster for visibility
+  private breathingBaseIntensity = 0.25 // Increased from 0.15
   
   // Attention shimmer
   private shimmerPhase = 0
-  private shimmerSpeed = 0.003
+  private shimmerSpeed = 0.005
+  private shimmerLastUpdate = 0
+  private readonly SHIMMER_INTERVAL = 200 // Update every 200ms (continuous)
   
   constructor(overlay: SplatTransitionOverlay, governor: EffectGovernor) {
     this.overlay = overlay
@@ -91,12 +94,12 @@ export class IdleEffects {
       this.breathingPhase += this.breathingSpeed
       this.shimmerPhase += this.shimmerSpeed
       
-      // Update breathing intensity
-      const breathingIntensity = 0.15 + Math.sin(this.breathingPhase) * 0.05 // 0.1-0.2
+      // Update breathing intensity (more visible)
+      const breathingIntensity = this.breathingBaseIntensity + Math.sin(this.breathingPhase) * 0.1 // 0.15-0.35
       this.governor.updateIntensity('idle-breathing', breathingIntensity)
       
-      // Update shimmer (subtle highlight at center)
-      this.updateShimmer()
+      // Update shimmer (continuous, not random)
+      this.updateShimmer(now)
     }
     
     this.rafId = requestAnimationFrame(this.animate)
@@ -106,8 +109,10 @@ export class IdleEffects {
     const effect: ActiveEffect = {
       id: 'idle-breathing',
       type: 'secondary',
-      intensity: 0.15,
+      priority: 'idle',
+      intensity: this.breathingBaseIntensity,
       startTime: performance.now(),
+      userTriggered: false,
     }
     this.governor.registerEffect(effect)
   }
@@ -120,8 +125,10 @@ export class IdleEffects {
     const effect: ActiveEffect = {
       id: 'idle-shimmer',
       type: 'secondary',
-      intensity: 0.1,
+      priority: 'idle',
+      intensity: 0.15,
       startTime: performance.now(),
+      userTriggered: false,
     }
     this.governor.registerEffect(effect)
   }
@@ -130,23 +137,25 @@ export class IdleEffects {
     this.governor.unregisterEffect('idle-shimmer')
   }
   
-  private updateShimmer(): void {
+  private updateShimmer(now: number): void {
     if (!this.sourceCanvas || !this.governor.isActive('idle-shimmer')) return
     
-    // Subtle highlight bias toward view center (very low frequency)
-    if (Math.random() < 0.02) { // 2% chance per frame
+    // Continuous low-amplitude shimmer (not random)
+    if (now - this.shimmerLastUpdate >= this.SHIMMER_INTERVAL) {
+      this.shimmerLastUpdate = now
+      
       const H = window.innerHeight
-      const centerY = H / 2
-      const bandHeight = H * 0.15
+      const centerY = H / 2 + Math.sin(this.shimmerPhase) * (H * 0.05) // Subtle vertical movement
+      const bandHeight = H * 0.12
       
       this.overlay.startAudioPulse({
         bandCenterY: centerY,
         bandHeight,
         direction: 'down',
-        intensity: 0.15,
-        durationMs: 400,
+        intensity: 0.2,
+        durationMs: 500,
         sourceCanvas: this.sourceCanvas,
-        intensityMultiplier: 0.6, // Very subtle
+        intensityMultiplier: 0.7, // Visible but subtle
       })
     }
   }
