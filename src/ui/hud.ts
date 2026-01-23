@@ -40,6 +40,9 @@ export const createHUD = () => {
       <button class="hud__button hud__button--sound" type="button" aria-label="Sound">
         <span class="hud__icon">🔊</span>
       </button>
+      <button class="hud__button hud__button--sound-mode" type="button" aria-label="Sound Mode">
+        <span class="hud__icon">🌊</span>
+      </button>
     </div>
 
     <div class="hud__caption">
@@ -270,6 +273,29 @@ export const createHUD = () => {
     onSoundToggle = handler
   }
 
+  // Sound Mode button
+  const soundModeButton = hud.querySelector<HTMLButtonElement>('.hud__button--sound-mode')
+  let onSoundModeToggle: ((enabled: boolean) => void) | null = null
+  let isSoundModeEnabled = false
+
+  if (soundModeButton) {
+    soundModeButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      isSoundModeEnabled = !isSoundModeEnabled
+      soundModeButton.classList.toggle('hud__button--active', isSoundModeEnabled)
+      if (onSoundModeToggle) {
+        onSoundModeToggle(isSoundModeEnabled)
+      }
+    })
+    soundModeButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+
+  const setSoundModeToggleHandler = (handler: (enabled: boolean) => void) => {
+    onSoundModeToggle = handler
+  }
+
   return {
     element: hud,
     showErrorToast,
@@ -277,5 +303,6 @@ export const createHUD = () => {
     hideLoading,
     setResetHandler,
     setSoundToggleHandler,
+    setSoundModeToggleHandler,
   }
 }

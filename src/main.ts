@@ -5,6 +5,7 @@ import { AnnotationManager, type Annotation } from './annotations/AnnotationMana
 import { ParticleDisintegration } from './transitions/ParticleDisintegration'
 import { SplatTransitionOverlay } from './transitions/SplatTransitionOverlay'
 import { AudioWavelength } from './effects/AudioWavelength'
+import { AudioPulseDriver } from './effects/AudioPulseDriver'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -36,6 +37,22 @@ hudResult.setSoundToggleHandler(async (enabled: boolean) => {
     }
   } else {
     audioWavelength.disable()
+  }
+})
+
+hudResult.setSoundModeToggleHandler(async (enabled: boolean) => {
+  if (enabled) {
+    const success = await audioPulseDriver.enable()
+    if (!success) {
+      showErrorToast('Microphone access required for audio pulse effect')
+      // Reset button state
+      const soundModeButton = hud.querySelector<HTMLButtonElement>('.hud__button--sound-mode')
+      if (soundModeButton) {
+        soundModeButton.classList.remove('hud__button--active')
+      }
+    }
+  } else {
+    audioPulseDriver.disable()
   }
 })
 
@@ -112,6 +129,11 @@ if (viewer.renderer) {
   viewer.renderer.domElement.addEventListener('webglcontextrestored', () => {
     console.warn('WebGL context restored')
   })
+  
+  // Set source canvas for audio pulse driver (will be set after audioPulseDriver is created)
+  setTimeout(() => {
+    audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
+  }, 0)
 }
 
 let currentSplatMesh:
@@ -126,6 +148,7 @@ const particleSystem = new ParticleDisintegration(threeScene)
 const splatTransitionOverlay = new SplatTransitionOverlay(app)
 const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
+const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null)
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   currentSplatMesh = splatMesh
@@ -763,8 +786,9 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
 
   const sourceCanvas = viewer.renderer?.domElement ?? null
 
-  // Pause audio effect during transition
+  // Pause audio effects during transition
   audioWavelength.pause()
+  audioPulseDriver.pause()
 
   if (isMobile) {
     splatTransitionOverlay.startTransition(
@@ -792,8 +816,9 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
-    // Resume audio effect after transition
+    // Resume audio effects after transition
     audioWavelength.resume()
+    audioPulseDriver.resume()
   }
   requestAnimationFrame(tick)
 }

@@ -112,6 +112,152 @@ export class SplatTransitionOverlay {
     })
   }
 
+  /**
+   * Start an audio pulse: samples particles from a specific band and animates them.
+   * Multiple pulses can coexist (additive particles).
+   */
+  startAudioPulse(params: {
+    bandCenterY: number
+    bandHeight: number
+    direction: 'up' | 'down'
+    intensity: number
+    durationMs: number
+    sourceCanvas: HTMLCanvasElement | null
+  }): void {
+    if (!DEBUG_TRANSITION_OVERLAY || !params.sourceCanvas || !this.ctx || !this.overlay) return
+
+    // Ensure overlay is visible
+    if (this.overlay) {
+      this.overlay.style.opacity = '1'
+    }
+
+    // Sample particles from the specified band
+    const pulseParticles = this.captureBandSample(
+      params.sourceCanvas,
+      params.bandCenterY,
+      params.bandHeight,
+      params.direction,
+      params.intensity
+    )
+
+    if (pulseParticles.length === 0) return
+
+    // Add particles to the active set (additive)
+    if (!this.isActive) {
+      this.isActive = true
+      this.startTime = performance.now()
+      this.particles = []
+      this.animate()
+    }
+
+    // Tag particles with their pulse lifetime
+    const pulseStartTime = performance.now()
+    const pulseDuration = params.durationMs
+    for (const p of pulseParticles) {
+      ;(p as Particle & { pulseStartTime: number; pulseDuration: number }).pulseStartTime = pulseStartTime
+      ;(p as Particle & { pulseStartTime: number; pulseDuration: number }).pulseDuration = pulseDuration
+      this.particles.push(p)
+    }
+  }
+
+  /**
+   * Sample particles from a specific band region of the canvas.
+   * Used for audio pulses that target a moving band.
+   */
+  private captureBandSample(
+    source: HTMLCanvasElement,
+    bandCenterY: number,
+    bandHeight: number,
+    direction: 'up' | 'down',
+    intensity: number
+  ): Particle[] {
+    const w = source.width
+    const h = source.height
+    if (w < 4 || h < 4) return []
+
+    const W = window.innerWidth
+    const H = window.innerHeight
+
+    // Convert screen-space Y to canvas-space Y
+    const canvasBandCenterY = (bandCenterY / H) * h
+    const canvasBandHeight = (bandHeight / H) * h
+    const bandTop = Math.max(0, canvasBandCenterY - canvasBandHeight / 2)
+    const bandBottom = Math.min(h, canvasBandCenterY + canvasBandHeight / 2)
+
+    const off = document.createElement('canvas')
+    off.width = w
+    off.height = h
+    const offCtx = off.getContext('2d', { alpha: true, willReadFrequently: true })
+    if (!offCtx) return []
+
+    try {
+      offCtx.drawImage(source, 0, 0, w, h, 0, 0, w, h)
+    } catch {
+      return []
+    }
+
+    let data: ImageData
+    try {
+      data = offCtx.getImageData(0, 0, w, h)
+    } catch {
+      return []
+    }
+
+    const { data: d } = data
+    const vySign = direction === 'up' ? -1 : 1
+
+    // Scale particle count by intensity
+    const baseParticleCount = Math.floor((W * bandHeight) / 200)
+    const targetParticleCount = Math.max(
+      Math.floor(baseParticleCount * 0.3),
+      Math.min(Math.floor(baseParticleCount * intensity), MAX_PARTICLES / 4)
+    )
+
+    const bandPixels = w * canvasBandHeight
+    const pixelsPerParticle = bandPixels / targetParticleCount
+    const stride = Math.max(1, Math.floor(Math.sqrt(pixelsPerParticle)))
+
+    const particles: Particle[] = []
+    let sampled = 0
+
+    for (let py = Math.floor(bandTop); py < Math.ceil(bandBottom); py += stride) {
+      for (let px = 0; px < w; px += stride) {
+        const i = (py * w + px) << 2
+        const r = d[i]
+        const g = d[i + 1]
+        const b = d[i + 2]
+        const a = d[i + 3]
+        if (a < ALPHA_THRESHOLD) continue
+
+        const x = (px / w) * W
+        const y = (py / h) * H
+        const brightness = (r + g + b) / (3 * 255)
+        const size = 1.2 + Math.random() * 2.3 + (1 - brightness) * 1.2
+
+        // Scale velocity by intensity
+        const velocityScale = 0.5 + intensity * 0.8
+
+        particles.push({
+          x: x + (Math.random() - 0.5) * JITTER_AMOUNT,
+          y: y + (Math.random() - 0.5) * JITTER_AMOUNT,
+          vx: (Math.random() - 0.5) * VX_SPREAD * 2,
+          vy: (Math.random() * 0.4 + 0.6) * VY_BASE * vySign * velocityScale,
+          r,
+          g,
+          b,
+          a: a / 255,
+          size,
+        })
+        sampled++
+
+        if (sampled >= targetParticleCount) break
+      }
+      if (sampled >= targetParticleCount) break
+    }
+
+    return particles
+  }
+
   private captureAndSample(source: HTMLCanvasElement): void {
     const w = source.width
     const h = source.height
@@ -266,8 +412,25 @@ export class SplatTransitionOverlay {
       this.ctx.drawImage(this.fallbackImage, 0, 0, W, H, 0, 0, W, H)
       this.ctx.globalAlpha = 1
     } else {
+      if (!this.ctx) return
+      
       const jitterDecay = Math.pow(JITTER_DECAY, elapsed / 16.67)
+      const now = performance.now()
+      
+      // Filter and update particles (handle pulse lifetimes)
+      const activeParticles: Particle[] = []
+      
       for (const p of this.particles) {
+        const pulseP = p as Particle & { pulseStartTime?: number; pulseDuration?: number }
+        
+        // If particle has pulse lifetime, check if it's expired
+        if (pulseP.pulseStartTime != null && pulseP.pulseDuration != null) {
+          const pulseAge = now - pulseP.pulseStartTime
+          if (pulseAge >= pulseP.pulseDuration) {
+            continue // Skip expired pulse particles
+          }
+        }
+
         p.x += p.vx * (1 + jitterDecay * 0.3)
         p.y += p.vy * (1 + jitterDecay * 0.2)
         p.a *= FALLOFF
@@ -279,6 +442,16 @@ export class SplatTransitionOverlay {
         this.ctx.beginPath()
         this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
         this.ctx.fill()
+        
+        activeParticles.push(p)
+      }
+
+      this.particles = activeParticles
+
+      // If no particles remain and not finishing, stop
+      if (this.particles.length === 0 && !this.isFinishing && t >= 1) {
+        this.stop()
+        return
       }
     }
 
