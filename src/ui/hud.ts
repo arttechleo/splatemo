@@ -34,14 +34,22 @@ export const createHUD = () => {
       <button class="hud__button hud__button--bookmark" type="button" aria-label="Bookmark">
         <span class="hud__icon">🔖</span>
       </button>
-      <button class="hud__button hud__button--reset" type="button" aria-label="Reset View">
-        <span class="hud__icon">⌂</span>
-      </button>
       <button class="hud__button hud__button--sound" type="button" aria-label="Sound">
         <span class="hud__icon">🔊</span>
       </button>
       <button class="hud__button hud__button--sound-mode" type="button" aria-label="Sound Mode">
         <span class="hud__icon">🌊</span>
+      </button>
+      <button class="hud__button hud__button--off-axis" type="button" aria-label="Off-Axis">
+        <span class="hud__icon">👁</span>
+        <span class="hud__status-indicator" id="off-axis-status"></span>
+      </button>
+    </div>
+    
+    <div class="hud__reset-container">
+      <button class="hud__button hud__button--reset hud__button--primary" type="button" aria-label="Reset View">
+        <span class="hud__icon">⌂</span>
+        <span class="hud__label">Recenter</span>
       </button>
     </div>
 
@@ -296,6 +304,50 @@ export const createHUD = () => {
     onSoundModeToggle = handler
   }
 
+  // Off-Axis button
+  const offAxisButton = hud.querySelector<HTMLButtonElement>('.hud__button--off-axis')
+  let onOffAxisToggle: ((enabled: boolean) => void) | null = null
+  let isOffAxisEnabled = false
+
+  if (offAxisButton) {
+    offAxisButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      isOffAxisEnabled = !isOffAxisEnabled
+      offAxisButton.classList.toggle('hud__button--active', isOffAxisEnabled)
+      if (onOffAxisToggle) {
+        onOffAxisToggle(isOffAxisEnabled)
+      }
+    })
+    offAxisButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+
+  const setOffAxisToggleHandler = (handler: (enabled: boolean) => void) => {
+    onOffAxisToggle = handler
+  }
+
+  // Off-Axis status indicator update function
+  const updateOffAxisStatus = (status: 'idle' | 'tracking' | 'error') => {
+    const statusEl = hud.querySelector<HTMLSpanElement>('#off-axis-status')
+    if (!statusEl) return
+    
+    statusEl.className = 'hud__status-indicator'
+    statusEl.setAttribute('data-status', status)
+    
+    // Add visual indicator
+    if (status === 'tracking') {
+      statusEl.style.background = 'rgba(34, 197, 94, 0.8)'
+      statusEl.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.6)'
+    } else if (status === 'error') {
+      statusEl.style.background = 'rgba(239, 68, 68, 0.8)'
+      statusEl.style.boxShadow = '0 0 8px rgba(239, 68, 68, 0.6)'
+    } else {
+      statusEl.style.background = 'transparent'
+      statusEl.style.boxShadow = 'none'
+    }
+  }
+
   return {
     element: hud,
     showErrorToast,
@@ -304,5 +356,7 @@ export const createHUD = () => {
     setResetHandler,
     setSoundToggleHandler,
     setSoundModeToggleHandler,
+    setOffAxisToggleHandler,
+    updateOffAxisStatus,
   }
 }

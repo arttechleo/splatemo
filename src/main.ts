@@ -6,6 +6,7 @@ import { ParticleDisintegration } from './transitions/ParticleDisintegration'
 import { SplatTransitionOverlay } from './transitions/SplatTransitionOverlay'
 import { AudioWavelength } from './effects/AudioWavelength'
 import { AudioPulseDriver } from './effects/AudioPulseDriver'
+import { OffAxisCamera } from './effects/OffAxisCamera'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -53,6 +54,39 @@ hudResult.setSoundModeToggleHandler(async (enabled: boolean) => {
     }
   } else {
     audioPulseDriver.disable()
+  }
+})
+
+hudResult.setOffAxisToggleHandler(async (enabled: boolean) => {
+  if (!offAxisCamera && viewer.camera) {
+    offAxisCamera = new OffAxisCamera(viewer.camera)
+    // Set status update callback
+    offAxisCamera.setOnStatusUpdate((status: 'idle' | 'tracking' | 'error') => {
+      hudResult.updateOffAxisStatus(status)
+    })
+  }
+  if (!offAxisCamera) {
+    showErrorToast('Camera not available')
+    hudResult.updateOffAxisStatus('error')
+    return
+  }
+  if (enabled) {
+    hudResult.updateOffAxisStatus('idle')
+    const success = await offAxisCamera.enable()
+    if (!success) {
+      showErrorToast('Camera access required for off-axis mode')
+      hudResult.updateOffAxisStatus('error')
+      // Reset button state
+      const offAxisButton = hud.querySelector<HTMLButtonElement>('.hud__button--off-axis')
+      if (offAxisButton) {
+        offAxisButton.classList.remove('hud__button--active')
+      }
+    } else {
+      hudResult.updateOffAxisStatus('tracking')
+    }
+  } else {
+    offAxisCamera.disable()
+    hudResult.updateOffAxisStatus('idle')
   }
 })
 
@@ -149,6 +183,8 @@ const splatTransitionOverlay = new SplatTransitionOverlay(app)
 const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null)
+// Off-axis camera will be initialized after viewer camera is ready
+let offAxisCamera: OffAxisCamera | null = null
 
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   currentSplatMesh = splatMesh
@@ -786,9 +822,10 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
 
   const sourceCanvas = viewer.renderer?.domElement ?? null
 
-  // Pause audio effects during transition
+  // Pause audio effects and off-axis during transition
   audioWavelength.pause()
   audioPulseDriver.pause()
+  offAxisCamera?.pause()
 
   if (isMobile) {
     splatTransitionOverlay.startTransition(
@@ -816,9 +853,10 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
-    // Resume audio effects after transition
+    // Resume audio effects and off-axis after transition
     audioWavelength.resume()
     audioPulseDriver.resume()
+    offAxisCamera?.resume()
   }
   requestAnimationFrame(tick)
 }
