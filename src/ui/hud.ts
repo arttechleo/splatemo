@@ -65,6 +65,7 @@ export const createHUD = () => {
             <option value="wind">Wind</option>
             <option value="glitter">Glitter</option>
             <option value="glow-dissolve">Glow Dissolve</option>
+            <option value="rain">Rain</option>
           </select>
         </div>
         <div class="hud__effects-control">

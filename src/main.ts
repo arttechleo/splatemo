@@ -163,6 +163,7 @@ if (viewer.renderer) {
   setTimeout(() => {
     audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
   }, 0)
 }
 
@@ -211,6 +212,9 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   } else {
     audioPulseDriver.setSplatMesh(null)
   }
+  
+  // Update camera reference for effects (for parallax)
+  effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
   
   // Handle scene removal (splatMesh is null/undefined)
   if (!splatMesh) {
