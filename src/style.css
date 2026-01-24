@@ -749,3 +749,205 @@ canvas {
 
 /* Optional: Add haptic feedback via JavaScript */
 /* This would be handled in the TypeScript code */
+
+/* ============================================
+   EFFECTS PANEL
+   ============================================ */
+
+.hud__effects-panel {
+  position: fixed;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%) translateX(120%);
+  background: rgba(20, 20, 25, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  min-width: 240px;
+  max-width: 280px;
+  pointer-events: auto;
+  z-index: 25;
+  box-shadow: var(--glass-shadow), var(--glass-glow);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@supports not (backdrop-filter: blur(20px)) {
+  .hud__effects-panel {
+    background: rgba(20, 20, 25, 0.95);
+  }
+}
+
+.hud__effects-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-highlight);
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.hud__effects-panel--open {
+  transform: translateY(-50%) translateX(0);
+}
+
+.hud__effects-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--glass-border-light);
+  position: relative;
+  z-index: 1;
+}
+
+.hud__effects-header h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.hud__close--effects {
+  background: rgba(255, 255, 255, var(--glass-opacity));
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-light);
+  border-radius: 50%;
+  color: var(--color-text);
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  pointer-events: auto;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--glass-shadow-sm);
+}
+
+.hud__close--effects:active {
+  transform: scale(0.9);
+}
+
+.hud__effects-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: relative;
+  z-index: 1;
+}
+
+.hud__effects-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.hud__effects-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hud__effects-select {
+  background: rgba(255, 255, 255, var(--glass-opacity));
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: var(--glass-shadow-sm);
+  transition: all 0.2s ease;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23fff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-2) center;
+  padding-right: calc(var(--space-4) + var(--space-1));
+}
+
+@supports not (backdrop-filter: blur(20px)) {
+  .hud__effects-select {
+    background: rgba(30, 30, 30, 0.9);
+  }
+}
+
+.hud__effects-select:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: var(--glass-shadow), 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+.hud__effects-slider {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-pill);
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.hud__effects-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+}
+
+.hud__effects-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 12px rgba(255, 255, 255, 0.4);
+}
+
+.hud__effects-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+}
+
+.hud__effects-slider::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 12px rgba(255, 255, 255, 0.4);
+}
+
+.hud__effects-value {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  text-align: right;
+  margin-top: -0.25rem;
+}
+
+@media (max-width: 768px) {
+  .hud__effects-panel {
+    right: var(--space-2);
+    min-width: 220px;
+    max-width: 260px;
+  }
+}

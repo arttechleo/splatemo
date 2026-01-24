@@ -8,6 +8,7 @@ import { AudioWavelength } from './effects/AudioWavelength'
 import { AudioPulseDriver } from './effects/AudioPulseDriver'
 import { OffAxisCamera } from './effects/OffAxisCamera'
 import { ColorSampler } from './effects/ColorSampler'
+import { EffectsController } from './effects/EffectsController'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -91,6 +92,14 @@ hudResult.setOffAxisToggleHandler(async (enabled: boolean) => {
   }
 })
 
+hudResult.setEffectsConfigChangeHandler((config) => {
+  effectsController.setConfig({
+    preset: config.preset as any,
+    intensity: config.intensity,
+    enabled: config.enabled,
+  })
+})
+
 const poster = document.createElement('div')
 poster.className = 'poster'
 poster.innerHTML = `
@@ -148,9 +157,10 @@ if (viewer.renderer) {
     console.warn('WebGL context restored')
   })
   
-  // Set source canvas for audio pulse driver (will be set after audioPulseDriver is created)
+  // Set source canvas for audio pulse driver and effects controller
   setTimeout(() => {
     audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    effectsController.setSourceCanvas(viewer.renderer?.domElement ?? null)
   }, 0)
 }
 
@@ -185,6 +195,7 @@ const splatTransitionOverlay = new SplatTransitionOverlay(app)
 const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null, null, null)
+const effectsController = new EffectsController(splatTransitionOverlay)
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
 
@@ -830,10 +841,11 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
 
   const sourceCanvas = viewer.renderer?.domElement ?? null
 
-  // Pause audio effects and off-axis during transition
+  // Pause audio effects, off-axis, and effects during transition
   audioWavelength.pause()
   audioPulseDriver.pause()
   offAxisCamera?.pause()
+  effectsController.pause()
 
   if (isMobile) {
     splatTransitionOverlay.startTransition(
@@ -861,10 +873,11 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
-    // Resume audio effects and off-axis after transition
+    // Resume audio effects, off-axis, and effects after transition
     audioWavelength.resume()
     audioPulseDriver.resume()
     offAxisCamera?.resume()
+    effectsController.resume()
   }
   requestAnimationFrame(tick)
 }

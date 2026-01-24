@@ -44,6 +44,35 @@ export const createHUD = () => {
         <span class="hud__icon">👁</span>
         <span class="hud__status-indicator" id="off-axis-status"></span>
       </button>
+      <button class="hud__button hud__button--effects" type="button" aria-label="Effects">
+        <span class="hud__icon">✨</span>
+      </button>
+    </div>
+    
+    <div class="hud__effects-panel">
+      <div class="hud__effects-header">
+        <h3>Effects</h3>
+        <button class="hud__close hud__close--effects" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="hud__effects-content">
+        <div class="hud__effects-control">
+          <label class="hud__effects-label">Preset</label>
+          <select class="hud__effects-select" id="effects-preset">
+            <option value="none">None</option>
+            <option value="waves">Waves</option>
+            <option value="disintegrate">Disintegrate</option>
+            <option value="perlin-wave">Perlin Wave</option>
+            <option value="wind">Wind</option>
+            <option value="glitter">Glitter</option>
+            <option value="glow-dissolve">Glow Dissolve</option>
+          </select>
+        </div>
+        <div class="hud__effects-control">
+          <label class="hud__effects-label">Intensity</label>
+          <input type="range" class="hud__effects-slider" id="effects-intensity" min="0" max="1" step="0.01" value="0.5">
+          <span class="hud__effects-value" id="effects-intensity-value">50%</span>
+        </div>
+      </div>
     </div>
     
     <div class="hud__reset-container">
@@ -327,6 +356,73 @@ export const createHUD = () => {
     onOffAxisToggle = handler
   }
 
+  // Effects button
+  const effectsButton = hud.querySelector<HTMLButtonElement>('.hud__button--effects')
+  const effectsPanel = hud.querySelector<HTMLDivElement>('.hud__effects-panel')
+  const effectsCloseButton = hud.querySelector<HTMLButtonElement>('.hud__close--effects')
+  const effectsPresetSelect = hud.querySelector<HTMLSelectElement>('#effects-preset')
+  const effectsIntensitySlider = hud.querySelector<HTMLInputElement>('#effects-intensity')
+  const effectsIntensityValue = hud.querySelector<HTMLSpanElement>('#effects-intensity-value')
+  let onEffectsConfigChange: ((config: { preset: string; intensity: number; enabled: boolean }) => void) | null = null
+  let isEffectsPanelOpen = false
+
+  if (effectsButton && effectsPanel) {
+    effectsButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      isEffectsPanelOpen = !isEffectsPanelOpen
+      effectsPanel.classList.toggle('hud__effects-panel--open', isEffectsPanelOpen)
+      effectsButton.classList.toggle('hud__button--active', isEffectsPanelOpen)
+    })
+    effectsButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+
+  if (effectsCloseButton && effectsPanel) {
+    effectsCloseButton.addEventListener('click', (e) => {
+      e.stopPropagation()
+      isEffectsPanelOpen = false
+      effectsPanel.classList.remove('hud__effects-panel--open')
+      effectsButton?.classList.remove('hud__button--active')
+    })
+    effectsCloseButton.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+    })
+  }
+
+  if (effectsPresetSelect) {
+    effectsPresetSelect.addEventListener('change', (e) => {
+      e.stopPropagation()
+      if (onEffectsConfigChange) {
+        const intensity = effectsIntensitySlider ? parseFloat(effectsIntensitySlider.value) : 0.5
+        onEffectsConfigChange({
+          preset: effectsPresetSelect.value,
+          intensity,
+          enabled: effectsPresetSelect.value !== 'none',
+        })
+      }
+    })
+  }
+
+  if (effectsIntensitySlider && effectsIntensityValue) {
+    effectsIntensitySlider.addEventListener('input', (e) => {
+      e.stopPropagation()
+      const value = parseFloat(effectsIntensitySlider.value)
+      effectsIntensityValue.textContent = `${Math.round(value * 100)}%`
+      if (onEffectsConfigChange && effectsPresetSelect) {
+        onEffectsConfigChange({
+          preset: effectsPresetSelect.value,
+          intensity: value,
+          enabled: effectsPresetSelect.value !== 'none',
+        })
+      }
+    })
+  }
+
+  const setEffectsConfigChangeHandler = (handler: (config: { preset: string; intensity: number; enabled: boolean }) => void) => {
+    onEffectsConfigChange = handler
+  }
+
   // Off-Axis status indicator update function
   const updateOffAxisStatus = (status: 'idle' | 'tracking' | 'error') => {
     const statusEl = hud.querySelector<HTMLSpanElement>('#off-axis-status')
@@ -357,6 +453,7 @@ export const createHUD = () => {
     setSoundToggleHandler,
     setSoundModeToggleHandler,
     setOffAxisToggleHandler,
+    setEffectsConfigChangeHandler,
     updateOffAxisStatus,
   }
 }
