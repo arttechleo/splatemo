@@ -20,6 +20,14 @@ export type EffectPreset =
   | 'rain'
   | 'rain-onto-splat'
   | 'depth-drift'
+  | 'depth-pulse'
+  | 'volumetric-drift'
+  | 'opacity-accumulation'
+  | 'covariance-stretch'
+  | 'temporal-persistence'
+  | 'depth-ambiguity'
+  | 'pressure-wave'
+  | 'grouped-selection'
 
 export type EffectIntensityPreset = 'subtle' | 'medium' | 'vivid'
 

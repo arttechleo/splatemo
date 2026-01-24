@@ -72,6 +72,16 @@ export const createHUD = () => {
             <option value="rain">Rain</option>
             <option value="rain-onto-splat">Rain Onto Splat</option>
             <option value="depth-drift">Depth Drift</option>
+            <optgroup label="Volumetric Effects">
+              <option value="depth-pulse">Depth Pulse</option>
+              <option value="volumetric-drift">Volumetric Drift</option>
+              <option value="opacity-accumulation">Opacity Accumulation</option>
+              <option value="covariance-stretch">Covariance Stretch</option>
+              <option value="temporal-persistence">Temporal Persistence</option>
+              <option value="depth-ambiguity">Depth Ambiguity</option>
+              <option value="pressure-wave">Pressure Wave</option>
+              <option value="grouped-selection">Grouped Selection</option>
+            </optgroup>
           </select>
         </div>
         <div class="hud__effects-control">

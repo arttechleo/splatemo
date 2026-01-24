@@ -28,6 +28,7 @@ import { PerformanceOptimizer } from './effects/PerformanceOptimizer'
 import { PerformanceController } from './effects/PerformanceController'
 import { OverlayCompositor } from './effects/OverlayCompositor'
 import { PerformanceDebug } from './effects/PerformanceDebug'
+import { VolumetricEffectsManager } from './effects/VolumetricEffects'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -190,6 +191,9 @@ const filmicOverlays = new FilmicOverlays(app)
 // Depth Drift effect
 const depthDrift = new DepthDrift(app)
 
+// Volumetric Effects Manager (splat-native visual effects)
+const volumetricEffects = new VolumetricEffectsManager(app)
+
 // Bottom loading indicator removed - using top HUD loading bar only
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
@@ -259,9 +263,10 @@ if (viewer.renderer) {
     console.warn('WebGL context restored')
   })
   
-  // Set source canvas for audio pulse driver and effects controller
-  setTimeout(() => {
-    audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    // Set source canvas for audio pulse driver, effects controller, and volumetric effects
+    setTimeout(() => {
+      audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
+      volumetricEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
     
@@ -1285,6 +1290,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   overlayCompositor.pause() // Pause compositor during transition
   effectsController.pause()
   depthDrift.pause() // Pause depth drift during transition
+  volumetricEffects.pauseAll() // Pause all volumetric effects during transition
   // Looks library effects pause automatically via their RAF loops when disabled
   tapInteractions.setTransitioning(true)
 
@@ -1347,6 +1353,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     performanceOptimizer.resume() // Resume FPS monitoring after transition
     performanceController.resume() // Resume performance controller after transition
     overlayCompositor.resume() // Resume compositor after transition
+    volumetricEffects.resumeAll() // Resume all volumetric effects after transition
     // Looks library will resume automatically when re-enabled
     tapInteractions.setTransitioning(false)
   }
