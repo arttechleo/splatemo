@@ -630,9 +630,8 @@ export class TapInteractions {
     const W = window.innerWidth
     const H = window.innerHeight
     
-    // Clear with fade
-      // No dimming - use clearRect instead
-      this.spotlightCtx.clearRect(0, 0, W, H)
+    // No dimming - use clearRect instead
+    this.spotlightCtx.clearRect(0, 0, W, H)
     
     // Grow spotlight while holding
     this.spotlightRadius = Math.min(180, this.spotlightRadius + 1.5)
@@ -712,10 +711,8 @@ export class TapInteractions {
       return
     }
     
-    // Clear with fade
     // No dimming - use clearRect instead
     this.spotlightCtx.clearRect(0, 0, W, H)
-    this.spotlightCtx.fillRect(0, 0, W, H)
     
     // Draw fading spotlight
     const x = this.holdX
