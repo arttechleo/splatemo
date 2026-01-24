@@ -19,6 +19,7 @@ export type EffectPreset =
   | 'glow-dissolve'
   | 'rain'
   | 'rain-onto-splat'
+  | 'depth-drift'
 
 export type EffectIntensityPreset = 'subtle' | 'medium' | 'vivid'
 

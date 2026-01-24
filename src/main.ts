@@ -22,6 +22,7 @@ import { IdleEffects } from './effects/IdleEffects'
 import { MotionEffects } from './effects/MotionEffects'
 import { FilmicOverlays } from './effects/FilmicOverlays'
 import { CinematicSplitTransition } from './transitions/CinematicSplitTransition'
+import { DepthDrift } from './effects/DepthDrift'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -114,6 +115,20 @@ hudResult.setEffectsConfigChangeHandler((config) => {
     boost: config.boost || 1.0,
   })
   
+  // Depth Drift effect (handled separately, not in EffectsController)
+  if (config.preset === 'depth-drift') {
+    const intensityPreset = (config.intensityPreset as 'subtle' | 'medium' | 'vivid') || 'medium'
+    const intensityMultipliers = { subtle: 0.5, medium: 1.0, vivid: 2.0 }
+    const effectiveIntensity = config.intensity * intensityMultipliers[intensityPreset]
+    
+    depthDrift.setConfig({
+      enabled: config.enabled,
+      intensity: effectiveIntensity,
+    })
+  } else {
+    depthDrift.setConfig({ enabled: false })
+  }
+  
   // Discovery disabled - no mode-based effects
 })
 
@@ -160,6 +175,9 @@ app.appendChild(overlay)
 const cinematicSplitTransition = new CinematicSplitTransition(app)
 const filmicOverlays = new FilmicOverlays(app)
 
+// Depth Drift effect
+const depthDrift = new DepthDrift(app)
+
 // Bottom loading indicator removed - using top HUD loading bar only
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
@@ -205,6 +223,11 @@ if (viewer.renderer) {
     audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
+    
+    // Depth Drift setup
+    depthDrift.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    depthDrift.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3 } | null)
+    
     tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
     tapInteractions.setConfig({ enabled: true })
     
@@ -276,6 +299,11 @@ if (viewer.renderer) {
         vignetteEnabled: config.vignetteEnabled,
         grainEnabled: config.grainEnabled,
       })
+    })
+    
+    // Wire depth drift tap excitement
+    document.addEventListener('depth-drift-excite', () => {
+      depthDrift.exciteNearestBand()
     })
     
     // Start time effects update loop
@@ -1139,6 +1167,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   audioPulseDriver.pause()
   offAxisCamera?.pause()
   effectsController.pause()
+  depthDrift.pause() // Pause depth drift during transition
   tapInteractions.setTransitioning(true)
 
   // Use cinematic split transition for feed navigation
@@ -1189,6 +1218,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     audioPulseDriver.resume()
     offAxisCamera?.resume()
     effectsController.resume()
+    depthDrift.resume() // Resume depth drift after transition
     tapInteractions.setTransitioning(false)
   }
   requestAnimationFrame(tick)
