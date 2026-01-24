@@ -13,12 +13,12 @@ export class MotionEffects {
   // Gyro data
   private rawTilt = { x: 0, y: 0 }
   private smoothedTilt = { x: 0, y: 0 }
-  private readonly SMOOTHING_FACTOR = 0.15
-  private readonly MAX_TILT = 0.2 // Clamped tilt
+  private readonly SMOOTHING_FACTOR = 0.95
+  private readonly MAX_TILT = 0.05 // Very small drift for Phase 3 (subtle magic)
   
   // Gravity bias
   private gravityBiasActive = false
-  private gravityBiasIntensity = 0.3
+  private gravityBiasIntensity = 0.03 // Very subtle for Phase 3
   
   constructor(governor: EffectGovernor) {
     this.governor = governor

@@ -29,9 +29,26 @@ export class TapInteractions {
     enabled: false,
   }
   
+  // Phase 1 callbacks
+  private tapFocusHandler: ((x: number, y: number) => void) | null = null
+  private doubleTapLikeHandler: ((x: number, y: number) => void) | null = null
+  
+  // Lab config for Phase 2 effects
+  private labConfig: {
+    rippleBurst: boolean
+    revealSpotlight: boolean
+    depthScrubbing: boolean
+    memoryEchoes: boolean
+  } = {
+    rippleBurst: true,
+    revealSpotlight: true,
+    depthScrubbing: true,
+    memoryEchoes: true,
+  }
+  
   // Memory echo (ghost impressions)
   private memoryEchoes: Array<{ x: number; y: number; age: number; lifetime: number }> = []
-  private readonly MAX_MEMORY_ECHOES = 6
+  private readonly MAX_MEMORY_ECHOES = 5 // Phase 2: max 5 echoes
   
   // Depth scrubbing
   private isDepthScrubbing = false
@@ -125,6 +142,23 @@ export class TapInteractions {
       this.cancelHold()
       this.cancelTap()
     }
+  }
+  
+  setTapFocusHandler(handler: (x: number, y: number) => void): void {
+    this.tapFocusHandler = handler
+  }
+  
+  setDoubleTapLikeHandler(handler: (x: number, y: number) => void): void {
+    this.doubleTapLikeHandler = handler
+  }
+  
+  setLabConfig(config: {
+    rippleBurst: boolean
+    revealSpotlight: boolean
+    depthScrubbing: boolean
+    memoryEchoes: boolean
+  }): void {
+    this.labConfig = { ...config }
   }
   
   private setupEventListeners(): void {
@@ -406,6 +440,9 @@ export class TapInteractions {
   private startDepthScrubbing(y: number): void {
     if (this.isDepthScrubbing) return
     
+    // Phase 2: Depth scrubbing (if enabled in lab)
+    if (!this.labConfig.depthScrubbing) return
+    
     this.isDepthScrubbing = true
     this.scrubCurrentY = y
     
@@ -476,54 +513,70 @@ export class TapInteractions {
   private handleSingleTap(x: number, y: number): void {
     if (!this.sourceCanvas) return
     
-    // Ripple burst: circular wave expanding from tap point
-    this.triggerRippleBurst(x, y)
+    // Phase 1: Tap = Focus (always active)
+    if (this.tapFocusHandler) {
+      this.tapFocusHandler(x, y)
+    }
     
-    // Add memory echo
-    this.addMemoryEcho(x, y)
+    // Phase 2: Ripple burst (if enabled in lab)
+    if (this.labConfig.rippleBurst) {
+      this.triggerRippleBurst(x, y)
+      
+      // Register as primary effect (user-triggered, high priority)
+      const effect: ActiveEffect = {
+        id: 'touch-ripple',
+        type: 'primary',
+        priority: 'touch',
+        intensity: this.config.rippleIntensity,
+        startTime: performance.now(),
+        duration: this.config.rippleDuration,
+        userTriggered: true, // Must not be suppressed
+      }
+      this.governor.registerEffect(effect)
+    }
+    
+    // Phase 2: Memory echo (if enabled in lab)
+    if (this.labConfig.memoryEchoes) {
+      this.addMemoryEcho(x, y)
+    }
     
     // Record interaction for rare pulse discovery
     const event = new CustomEvent('user-interaction')
     document.dispatchEvent(event)
-    
-    // Register as primary effect (user-triggered, high priority)
-    const effect: ActiveEffect = {
-      id: 'touch-ripple',
-      type: 'primary',
-      priority: 'touch',
-      intensity: this.config.rippleIntensity,
-      startTime: performance.now(),
-      duration: this.config.rippleDuration,
-      userTriggered: true, // Must not be suppressed
-    }
-    this.governor.registerEffect(effect)
   }
   
   private handleDoubleTap(x: number, y: number): void {
     if (!this.sourceCanvas) return
     
-    // Disintegrate pop + reassemble
-    this.triggerDisintegratePop(x, y)
+    // Phase 1: Double tap = Like affordance (always active)
+    if (this.doubleTapLikeHandler) {
+      this.doubleTapLikeHandler(x, y)
+    }
     
-    // Also trigger density highlight
-    const event = new CustomEvent('density-highlight-activate')
-    document.dispatchEvent(event)
+    // Phase 2: Disintegrate pop (if enabled in lab)
+    if (this.labConfig.rippleBurst) {
+      this.triggerDisintegratePop(x, y)
+      
+      // Also trigger density highlight
+      const event = new CustomEvent('density-highlight-activate')
+      document.dispatchEvent(event)
+      
+      // Register as primary effect (user-triggered, high priority)
+      const effect: ActiveEffect = {
+        id: 'touch-disintegrate',
+        type: 'primary',
+        priority: 'touch',
+        intensity: this.config.disintegrateIntensity,
+        startTime: performance.now(),
+        duration: this.config.disintegrateDuration,
+        userTriggered: true,
+      }
+      this.governor.registerEffect(effect)
+    }
     
     // Record interaction
     const interactionEvent = new CustomEvent('user-interaction')
     document.dispatchEvent(interactionEvent)
-    
-    // Register as primary effect (user-triggered, high priority)
-    const effect: ActiveEffect = {
-      id: 'touch-disintegrate',
-      type: 'primary',
-      priority: 'touch',
-      intensity: this.config.disintegrateIntensity,
-      startTime: performance.now(),
-      duration: this.config.disintegrateDuration,
-      userTriggered: true,
-    }
-    this.governor.registerEffect(effect)
   }
   
   /**

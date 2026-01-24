@@ -14,6 +14,12 @@ import { EffectGovernor } from './effects/EffectGovernor'
 import { TimeEffects } from './effects/TimeEffects'
 import { InterpretiveEffects } from './effects/InterpretiveEffects'
 import { MicroFeedback } from './effects/MicroFeedback'
+import { FeedGhostPreview } from './effects/FeedGhostPreview'
+import { SplatFocus } from './effects/SplatFocus'
+import { LikeAffordance } from './effects/LikeAffordance'
+import { ExplorationLab } from './effects/ExplorationLab'
+import { IdleEffects } from './effects/IdleEffects'
+import { MotionEffects } from './effects/MotionEffects'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -195,17 +201,78 @@ if (viewer.renderer) {
     effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
     tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
     tapInteractions.setConfig({ enabled: true })
+    
+    // Phase 1: Wire tap focus and double tap like
+    tapInteractions.setTapFocusHandler((_x: number, _y: number) => {
+      if (explorationLab.getConfig().tapFocus) {
+        // Recenter view
+        resetView()
+        // Trigger focus effect
+        splatFocus.trigger()
+      }
+    })
+    
+    tapInteractions.setDoubleTapLikeHandler((x: number, y: number) => {
+      if (explorationLab.getConfig().doubleTapLike) {
+        likeAffordance.trigger(x, y)
+      }
+    })
+    
+    // Phase 2: Update lab config for tap interactions
+    explorationLab.onConfigChange((config) => {
+      tapInteractions.setLabConfig({
+        rippleBurst: config.rippleBurst,
+        revealSpotlight: config.revealSpotlight,
+        depthScrubbing: config.depthScrubbing,
+        memoryEchoes: config.memoryEchoes,
+      })
+      
+      // Phase 1: Ghost preview
+      feedGhostPreview.setEnabled(config.ghostPreview)
+    })
+    
+    // Initialize lab config
+    const initialLabConfig = explorationLab.getConfig()
+    tapInteractions.setLabConfig({
+      rippleBurst: initialLabConfig.rippleBurst,
+      revealSpotlight: initialLabConfig.revealSpotlight,
+      depthScrubbing: initialLabConfig.depthScrubbing,
+      memoryEchoes: initialLabConfig.memoryEchoes,
+    })
+    feedGhostPreview.setEnabled(initialLabConfig.ghostPreview)
+    
     timeEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
     interpretiveEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
     
-    // Idle effects disabled - effects only via explicit interaction or Vivid mode
-    // Motion effects disabled - effects only via explicit interaction or Vivid mode
+    // Phase 3: Subtle Magic (controlled by lab config)
+    idleEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    
+    explorationLab.onConfigChange((config) => {
+      // Breathing presence
+      if (config.breathingPresence) {
+        idleEffects.start()
+      } else {
+        idleEffects.stop()
+      }
+      
+      // Gyro gravity bias
+      const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      if (config.gyroGravityBias && isMobile) {
+        motionEffects.enable()
+      } else {
+        motionEffects.disable()
+      }
+    })
     
     // Start time effects update loop
     const updateTimeEffects = () => {
       const vividMode = effectGovernor.getVividMode()
       timeEffects.update()
-      timeEffects.checkRarePulse(vividMode)
+      
+      // Phase 3: Rare pulse (if enabled in lab)
+      if (explorationLab.getConfig().rarePulse) {
+        timeEffects.checkRarePulse(vividMode)
+      }
       
       // Apply slow time factor to overlay
       const slowTimeFactor = timeEffects.getSlowTimeFactor()
@@ -339,6 +406,16 @@ const timeEffects = new TimeEffects(splatTransitionOverlay, effectGovernor)
 const interpretiveEffects = new InterpretiveEffects(splatTransitionOverlay, effectGovernor)
 const tapInteractions = new TapInteractions(splatTransitionOverlay, effectGovernor)
 const microFeedback = new MicroFeedback(splatTransitionOverlay)
+
+// Exploration Playground
+const feedGhostPreview = new FeedGhostPreview()
+const splatFocus = new SplatFocus(splatTransitionOverlay)
+const likeAffordance = new LikeAffordance(splatTransitionOverlay)
+const explorationLab = new ExplorationLab()
+
+// Subtle Magic (Phase 3) - re-enabled but controlled
+const idleEffects = new IdleEffects(splatTransitionOverlay, effectGovernor)
+const motionEffects = new MotionEffects(effectGovernor)
 
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
@@ -697,6 +774,32 @@ const resetView = () => {
   console.log('[RESET] View restored to default')
 }
 
+/**
+ * Apply scale-in animation when new splat lands.
+ */
+const applyScaleInAnimation = () => {
+  const canvas = viewer.renderer?.domElement
+  if (!canvas) return
+  
+  // Add CSS animation class
+  canvas.style.transition = 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)'
+  canvas.style.transform = 'scale(0.95)'
+  
+  // Trigger reflow
+  void canvas.offsetWidth
+  
+  // Animate to scale(1)
+  requestAnimationFrame(() => {
+    canvas.style.transform = 'scale(1)'
+    
+    // Remove transition after animation
+    setTimeout(() => {
+      canvas.style.transition = ''
+      canvas.style.transform = ''
+    }, 400)
+  })
+}
+
 const setupOrbitControls = () => {
   if (!viewer.controls) return
   const controls = viewer.controls as unknown as {
@@ -1006,9 +1109,12 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   }
 
   const transitionStart = performance.now()
-  const transitionDuration = isMobile ? 0 : 750
+  const transitionDuration = isMobile ? 600 : 750 // Consistent 600ms for mobile
   const renderModeSetter = viewer as unknown as { setRenderMode?: (mode: number) => void }
   renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.Always)
+  
+  // Reset ghost preview
+  feedGhostPreview.reset()
 
   const tick = async (time: number) => {
     if (!isMobile) particleSystem.update(time)
@@ -1021,6 +1127,11 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     isTransitioning = false
     if (isMobile) {
       splatTransitionOverlay.endTransition()
+    }
+    
+    // Scale-in animation when new splat lands
+    if (explorationLab.getConfig().scaleInAnimation) {
+      applyScaleInAnimation()
     }
     // Resume audio effects, off-axis, and effects after transition
     audioWavelength.resume()
@@ -1412,6 +1523,9 @@ const setupSplatNavigation = () => {
       if (gestureLock === 'vertical' && (Math.abs(deltaY) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
         event.preventDefault()
         
+        // Reset ghost preview
+        feedGhostPreview.reset()
+        
         // Subtle haptic for feed snap
         if ('vibrate' in navigator) {
           try {
@@ -1428,6 +1542,9 @@ const setupSplatNavigation = () => {
       gestureLock = null
       gestureMode = null
       totalDeltaY = 0
+      
+      // Reset ghost preview
+      feedGhostPreview.reset()
     }
   }
 
@@ -1465,13 +1582,21 @@ const start = async () => {
   }
 
   console.log('[INIT] Loading first splat (index 0)')
-  await loadSplat(0)
-  currentPoses = splatEntries[0]?.cameraPoses
-  
-  setupOrbitControls()
-  setupOrbitStabilization()
-  setupPoseSnapping()
-  setupSplatNavigation()
+    await loadSplat(0)
+    currentPoses = splatEntries[0]?.cameraPoses
+    
+    // Initialize ghost preview
+    feedGhostPreview.setViewer(viewer)
+    feedGhostPreview.setCurrentIndex(currentIndex, splatEntries.length)
+    
+    // Set source canvas for focus and like
+    splatFocus.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    likeAffordance.setSourceCanvas(viewer.renderer?.domElement ?? null)
+    
+    setupOrbitControls()
+    setupOrbitStabilization()
+    setupPoseSnapping()
+    setupSplatNavigation()
   
   // Wire reset handler with micro-feedback
   const resetButton = hud.querySelector<HTMLButtonElement>('.hud__button--reset')
