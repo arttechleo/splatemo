@@ -23,6 +23,7 @@ import { MotionEffects } from './effects/MotionEffects'
 import { FilmicOverlays } from './effects/FilmicOverlays'
 import { CinematicSplitTransition } from './transitions/CinematicSplitTransition'
 import { DepthDrift } from './effects/DepthDrift'
+import { LooksLibrary } from './effects/LooksLibrary'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -117,9 +118,16 @@ hudResult.setEffectsConfigChangeHandler((config) => {
   
   // Depth Drift effect (handled separately, not in EffectsController)
   if (config.preset === 'depth-drift') {
-    const intensityPreset = (config.intensityPreset as 'subtle' | 'medium' | 'vivid') || 'medium'
-    const intensityMultipliers = { subtle: 0.5, medium: 1.0, vivid: 2.0 }
-    const effectiveIntensity = config.intensity * intensityMultipliers[intensityPreset]
+    const intensityPreset = (config.intensityPreset as 'subtle' | 'medium' | 'vivid') || 'bold'
+    // Higher ceiling for visibility: subtle 0.6x, medium 1.0x, vivid 2.5x
+    // "Bold" preset (default): 1.2x for demo visibility
+    const intensityMultipliers: Record<string, number> = { 
+      subtle: 0.6, 
+      medium: 1.0, 
+      vivid: 2.5,
+      bold: 1.2, // Default "Bold" preset
+    }
+    const effectiveIntensity = Math.min(1.0, config.intensity * (intensityMultipliers[intensityPreset] || 1.2))
     
     depthDrift.setConfig({
       enabled: config.enabled,
@@ -177,6 +185,9 @@ const filmicOverlays = new FilmicOverlays(app)
 
 // Depth Drift effect
 const depthDrift = new DepthDrift(app)
+
+// Looks library (no arguments needed)
+const looksLibrary = new LooksLibrary(app)
 
 // Bottom loading indicator removed - using top HUD loading bar only
 
@@ -293,13 +304,20 @@ if (viewer.renderer) {
       }
     })
     
-    // Wire filmic overlays controls
-    hudResult.setFilmicOverlayChangeHandler((config: { vignetteEnabled: boolean; grainEnabled: boolean }) => {
-      filmicOverlays.setConfig({
-        vignetteEnabled: config.vignetteEnabled,
-        grainEnabled: config.grainEnabled,
+    // Wire filmic overlays controls (legacy, kept for compatibility)
+    // Note: Film grain is now part of Looks library
+    
+    // Wire Looks library controls
+    hudResult.setLookChangeHandler((config: { type: string; intensity: number; enabled: boolean }) => {
+      looksLibrary.setLook({
+        type: config.type as any,
+        intensity: config.intensity,
+        enabled: config.enabled,
       })
     })
+    
+    // Set source canvas for looks that need it
+    looksLibrary.setSourceCanvas(viewer.renderer?.domElement ?? null)
     
     // Wire depth drift tap excitement
     document.addEventListener('depth-drift-excite', () => {
@@ -444,7 +462,7 @@ const effectGovernor = new EffectGovernor()
 const timeEffects = new TimeEffects(splatTransitionOverlay, effectGovernor)
 const interpretiveEffects = new InterpretiveEffects(splatTransitionOverlay, effectGovernor)
 const tapInteractions = new TapInteractions(splatTransitionOverlay, effectGovernor)
-const microFeedback = new MicroFeedback(splatTransitionOverlay)
+const microFeedback = new MicroFeedback()
 
 // Exploration Playground
 const feedGhostPreview = new FeedGhostPreview()
@@ -1174,6 +1192,12 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   const splitDirection = direction === 'next' ? 'down' : 'up'
   cinematicSplitTransition.startTransition(splitDirection, sourceCanvas)
   
+  // Trigger light leak sweep if enabled
+  looksLibrary.triggerLightLeak(splitDirection)
+  
+  // Trigger chromatic whisper if enabled (motion-based)
+  looksLibrary.triggerChromatic(splitDirection, 700)
+  
   // Keep existing disintegrate as fallback/alternative
   if (isMobile) {
     splatTransitionOverlay.startTransition(
@@ -1711,8 +1735,7 @@ const start = async () => {
     microFeedback.trigger(type, element, x, y)
   })
   
-  // Set source canvas for micro-feedback
-  microFeedback.setSourceCanvas(viewer.renderer?.domElement ?? null)
+  // MicroFeedback no longer needs source canvas (UI-only, no particles)
   viewer.start()
   
   const camera = viewer.camera

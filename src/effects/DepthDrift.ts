@@ -23,15 +23,15 @@ export interface DepthDriftConfig {
 
 const DEFAULT_CONFIG: DepthDriftConfig = {
   enabled: false, // OFF by default
-  intensity: 0.4,
-  bandCount: 4,
-  bandLifetime: 4000, // 4 seconds
-  nearDisplacement: 8,
-  farDisplacement: 2,
-  nearSpeed: 1.2,
-  farSpeed: 0.6,
-  wispSize: 12,
-  wispAlpha: 0.15,
+  intensity: 0.6, // Increased default intensity
+  bandCount: 3, // Fewer, bolder bands (was 4)
+  bandLifetime: 5000, // 5 seconds (slightly longer)
+  nearDisplacement: 24, // Much larger (was 8) - 3x increase
+  farDisplacement: 6, // Increased (was 2) - 3x increase, maintaining 4x ratio
+  nearSpeed: 0.8, // Slower for cinematic feel (was 1.2)
+  farSpeed: 0.3, // Slower (was 0.6), maintaining ~2.7x ratio
+  wispSize: 18, // Larger wisps (was 12)
+  wispAlpha: 0.25, // More visible (was 0.15)
   tapExciteDuration: 650,
   tapExciteIntensity: 2.5,
 }
@@ -80,15 +80,20 @@ export class DepthDrift {
   
   // Sampled wisps
   private wisps: Wisp[] = []
-  private readonly MAX_WISPS = 800 // Mobile-safe cap
+  private readonly MAX_WISPS = 1200 // Increased for visibility (was 800)
   private lastSampleTime = 0
   private readonly SAMPLE_INTERVAL = 2000 // Resample every 2 seconds
+  
+  // Edge highlight overlay for active bands
+  private highlightCanvas: HTMLCanvasElement | null = null
+  private highlightCtx: CanvasRenderingContext2D | null = null
   
   constructor(container: HTMLElement) {
     this.createOverlay(container)
   }
   
   private createOverlay(container: HTMLElement): void {
+    // Main wisp overlay
     this.overlay = document.createElement('canvas')
     this.overlay.className = 'depth-drift-overlay'
     this.overlay.style.position = 'fixed'
@@ -110,17 +115,47 @@ export class DepthDrift {
     }
     
     container.appendChild(this.overlay)
+    
+    // Edge highlight overlay for active bands
+    this.highlightCanvas = document.createElement('canvas')
+    this.highlightCanvas.className = 'depth-drift-highlight'
+    this.highlightCanvas.style.position = 'fixed'
+    this.highlightCanvas.style.top = '0'
+    this.highlightCanvas.style.left = '0'
+    this.highlightCanvas.style.width = '100%'
+    this.highlightCanvas.style.height = '100%'
+    this.highlightCanvas.style.pointerEvents = 'none'
+    this.highlightCanvas.style.zIndex = '10' // Above wisps
+    this.highlightCanvas.style.opacity = '1'
+    
+    this.highlightCanvas.width = window.innerWidth * dpr
+    this.highlightCanvas.height = window.innerHeight * dpr
+    
+    this.highlightCtx = this.highlightCanvas.getContext('2d', { alpha: true })
+    if (this.highlightCtx) {
+      this.highlightCtx.scale(dpr, dpr)
+    }
+    
+    container.appendChild(this.highlightCanvas)
     window.addEventListener('resize', () => this.resize())
   }
   
   private resize(): void {
-    if (!this.overlay || !this.ctx) return
-    
     const dpr = Math.min(2, window.devicePixelRatio || 1)
-    this.overlay.width = window.innerWidth * dpr
-    this.overlay.height = window.innerHeight * dpr
-    this.ctx.setTransform(1, 0, 0, 1, 0, 0)
-    this.ctx.scale(dpr, dpr)
+    
+    if (this.overlay && this.ctx) {
+      this.overlay.width = window.innerWidth * dpr
+      this.overlay.height = window.innerHeight * dpr
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0)
+      this.ctx.scale(dpr, dpr)
+    }
+    
+    if (this.highlightCanvas && this.highlightCtx) {
+      this.highlightCanvas.width = window.innerWidth * dpr
+      this.highlightCanvas.height = window.innerHeight * dpr
+      this.highlightCtx.setTransform(1, 0, 0, 1, 0, 0)
+      this.highlightCtx.scale(dpr, dpr)
+    }
   }
   
   setSourceCanvas(canvas: HTMLCanvasElement | null): void {
@@ -167,6 +202,9 @@ export class DepthDrift {
     this.wisps = []
     if (this.ctx && this.overlay) {
       this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height)
+    }
+    if (this.highlightCtx && this.highlightCanvas) {
+      this.highlightCtx.clearRect(0, 0, this.highlightCanvas.width, this.highlightCanvas.height)
     }
   }
   
@@ -364,9 +402,10 @@ export class DepthDrift {
       }
       
       // Update animation phase (sine wave + mild noise)
+      // Slower base speed for cinematic feel, but larger amplitude
       const speedMultiplier = band.excited ? this.config.tapExciteIntensity : 1.0
-      const baseSpeed = 0.02 * band.speed * speedMultiplier
-      const noiseSpeed = (Math.random() - 0.5) * 0.002 // Mild noise
+      const baseSpeed = 0.012 * band.speed * speedMultiplier // Slower (was 0.02)
+      const noiseSpeed = (Math.random() - 0.5) * 0.001 // Mild noise
       band.phase += baseSpeed + noiseSpeed
       
       if (band.phase > Math.PI * 2) {
@@ -374,6 +413,66 @@ export class DepthDrift {
       } else if (band.phase < 0) {
         band.phase += Math.PI * 2
       }
+    }
+  }
+  
+  /**
+   * Draw edge highlights on active depth bands.
+   * Screen/additive blend for visibility on bright splats.
+   * Creates clear "depth parallax" cue showing which bands are moving.
+   */
+  private drawEdgeHighlights(now: number): void {
+    if (!this.highlightCtx || !this.highlightCanvas) return
+    
+    const W = window.innerWidth
+    const H = window.innerHeight
+    
+    // Clear highlight canvas
+    this.highlightCtx.clearRect(0, 0, W, H)
+    
+    const intensity = this.config.intensity
+    
+    // Draw highlights for each active band
+    for (const band of this.bands) {
+      // Calculate band activity (based on wisp count in this band)
+      const wispsInBand = this.wisps.filter(w => 
+        w.depth >= band.depthMin && w.depth <= band.depthMax
+      ).length
+      
+      if (wispsInBand === 0) continue
+      
+      const activity = Math.min(1, wispsInBand / (this.MAX_WISPS / this.config.bandCount))
+      // More visible highlights for better depth perception
+      const highlightIntensity = intensity * activity * 0.5 // Increased from 0.3
+      
+      // Excitement boost
+      const excitement = band.excited 
+        ? Math.max(0, 1 - (now - band.exciteStartTime) / this.config.tapExciteDuration)
+        : 0
+      const finalIntensity = highlightIntensity * (1 + excitement * 0.5)
+      
+      // Create edge highlight gradient
+      // Highlight edges of depth bands based on motion phase
+      const depthCenter = (band.depthMin + band.depthMax) / 2
+      const nearness = 1 - depthCenter
+      
+      // Animate highlight position based on band phase (shows motion)
+      const phaseOffset = Math.sin(band.phase) * H * 0.1 // Subtle movement
+      const highlightY = (nearness * H * 0.3 + (1 - nearness) * H * 0.7) + phaseOffset
+      const highlightHeight = H * 0.2 // Thicker highlights (was 0.15)
+      
+      const gradient = this.highlightCtx.createLinearGradient(0, highlightY - highlightHeight / 2, 0, highlightY + highlightHeight / 2)
+      gradient.addColorStop(0, `rgba(255, 255, 255, 0)`)
+      gradient.addColorStop(0.2, `rgba(255, 255, 255, ${finalIntensity * 0.3})`)
+      gradient.addColorStop(0.5, `rgba(255, 255, 255, ${finalIntensity})`)
+      gradient.addColorStop(0.8, `rgba(255, 255, 255, ${finalIntensity * 0.3})`)
+      gradient.addColorStop(1, `rgba(255, 255, 255, 0)`)
+      
+      this.highlightCtx.save()
+      this.highlightCtx.globalCompositeOperation = 'screen' // Additive blend for visibility
+      this.highlightCtx.fillStyle = gradient
+      this.highlightCtx.fillRect(0, highlightY - highlightHeight / 2, W, highlightHeight)
+      this.highlightCtx.restore()
     }
   }
   
@@ -403,13 +502,14 @@ export class DepthDrift {
     const excitementMultiplier = 1 + excitement * (this.config.tapExciteIntensity - 1)
     
     // Calculate displacement based on band
-    // Near bands move more, far bands move less
+    // Near bands move much more (2-4x difference), far bands move less
+    // Increased amplitude for visibility while keeping cinematic feel
     const sineX = Math.sin(wisp.phase + band.phase) * band.displacement * intensity * excitementMultiplier
-    const sineY = Math.cos(wisp.phase * 0.7 + band.phase) * band.displacement * 0.6 * intensity * excitementMultiplier
+    const sineY = Math.cos(wisp.phase * 0.7 + band.phase) * band.displacement * 0.7 * intensity * excitementMultiplier // Increased from 0.6
     
-    // Add mild noise for organic feel
-    const noiseX = (Math.random() - 0.5) * 0.4
-    const noiseY = (Math.random() - 0.5) * 0.4
+    // Add mild noise for organic feel (reduced for cleaner motion)
+    const noiseX = (Math.random() - 0.5) * 0.3 // Reduced from 0.4
+    const noiseY = (Math.random() - 0.5) * 0.3 // Reduced from 0.4
     
     const x = wisp.baseX + sineX + noiseX
     const y = wisp.baseY + sineY + noiseY
@@ -459,7 +559,7 @@ export class DepthDrift {
     // Update bands
     this.updateBands(now)
     
-    // Clear canvas
+    // Clear canvases
     const W = window.innerWidth
     const H = window.innerHeight
     this.ctx.clearRect(0, 0, W, H)
@@ -472,6 +572,9 @@ export class DepthDrift {
       }
     }
     
+    // Draw edge highlights for active bands (shows depth parallax clearly)
+    this.drawEdgeHighlights(now)
+    
     this.rafId = requestAnimationFrame(this.animate)
   }
   
@@ -480,7 +583,12 @@ export class DepthDrift {
     if (this.overlay && this.overlay.parentNode) {
       this.overlay.parentNode.removeChild(this.overlay)
     }
+    if (this.highlightCanvas && this.highlightCanvas.parentNode) {
+      this.highlightCanvas.parentNode.removeChild(this.highlightCanvas)
+    }
     this.overlay = null
     this.ctx = null
+    this.highlightCanvas = null
+    this.highlightCtx = null
   }
 }

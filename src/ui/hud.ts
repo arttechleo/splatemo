@@ -78,7 +78,8 @@ export const createHUD = () => {
           <label class="hud__effects-label">Intensity Preset</label>
           <select class="hud__effects-select" id="effects-intensity-preset">
             <option value="subtle">Subtle</option>
-            <option value="medium" selected>Medium</option>
+            <option value="medium">Medium</option>
+            <option value="bold" selected>Bold</option>
             <option value="vivid">Vivid</option>
           </select>
         </div>
@@ -88,17 +89,20 @@ export const createHUD = () => {
           <span class="hud__effects-value" id="effects-intensity-value">50%</span>
         </div>
         <div class="hud__effects-control">
-          <label class="hud__effects-label">Filmic Overlays</label>
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" id="filmic-vignette" style="cursor: pointer;">
-              <span>Vignette</span>
-            </label>
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" id="filmic-grain" style="cursor: pointer;">
-              <span>Grain</span>
-            </label>
-          </div>
+          <label class="hud__effects-label">Look</label>
+          <select class="hud__effects-select" id="look-select">
+            <option value="clean" selected>Clean</option>
+            <option value="film-grain">Film Grain</option>
+            <option value="bloom-hint">Bloom Hint</option>
+            <option value="chromatic-whisper">Chromatic Whisper</option>
+            <option value="light-leak-sweep">Light Leak Sweep</option>
+            <option value="vhs-soft">VHS Soft</option>
+          </select>
+        </div>
+        <div class="hud__effects-control">
+          <label class="hud__effects-label">Look Intensity</label>
+          <input type="range" class="hud__effects-slider" id="look-intensity" min="0" max="1" step="0.01" value="0.3">
+          <span class="hud__effects-value" id="look-intensity-value">30%</span>
         </div>
       </div>
     </div>
@@ -572,7 +576,7 @@ export const createHUD = () => {
     onEffectsConfigChange = handler
   }
   
-  // Filmic overlays handlers
+  // Filmic overlays handlers (legacy, kept for compatibility)
   let onFilmicOverlayChange: ((config: { vignetteEnabled: boolean; grainEnabled: boolean }) => void) | null = null
   
   const setFilmicOverlayChangeHandler = (handler: (config: { vignetteEnabled: boolean; grainEnabled: boolean }) => void) => {
@@ -598,7 +602,40 @@ export const createHUD = () => {
     }
   }
   
-  // Discovery disabled - removed handlers
+  // Looks library handlers
+  let onLookChange: ((config: { type: string; intensity: number; enabled: boolean }) => void) | null = null
+  
+  const setLookChangeHandler = (handler: (config: { type: string; intensity: number; enabled: boolean }) => void) => {
+    onLookChange = handler
+    
+    const lookSelect = hud.querySelector<HTMLSelectElement>('#look-select')
+    const lookIntensitySlider = hud.querySelector<HTMLInputElement>('#look-intensity')
+    const lookIntensityValue = hud.querySelector<HTMLSpanElement>('#look-intensity-value')
+    
+    const updateLook = () => {
+      if (onLookChange && lookSelect && lookIntensitySlider) {
+        const type = lookSelect.value
+        const intensity = parseFloat(lookIntensitySlider.value)
+        const enabled = type !== 'clean'
+        
+        if (lookIntensityValue) {
+          lookIntensityValue.textContent = `${Math.round(intensity * 100)}%`
+        }
+        
+        onLookChange({ type, intensity, enabled })
+      }
+    }
+    
+    if (lookSelect) {
+      lookSelect.addEventListener('change', updateLook)
+    }
+    if (lookIntensitySlider) {
+      lookIntensitySlider.addEventListener('input', updateLook)
+    }
+    
+    // Initial update
+    updateLook()
+  }
 
   // Off-Axis status indicator update function
   const updateOffAxisStatus = (status: 'idle' | 'tracking' | 'error') => {
@@ -641,6 +678,6 @@ export const createHUD = () => {
       commentMicroFeedbackHandler = handler
       shareMicroFeedbackHandler = handler
     },
-    setFilmicOverlayChangeHandler,
+    setLookChangeHandler: setLookChangeHandler,
   }
 }
