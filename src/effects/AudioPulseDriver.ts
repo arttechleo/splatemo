@@ -61,11 +61,8 @@ export class AudioPulseDriver {
   private sourceCanvas: HTMLCanvasElement | null = null
   
   // Camera reference for depth calculations (reserved for future depth-based filtering)
-  // @ts-expect-error - Reserved for future use
   private _camera: THREE.PerspectiveCamera | null = null
-  // @ts-expect-error - Reserved for future use
   private _controls: { target?: THREE.Vector3 } | null = null
-  // @ts-expect-error - Reserved for future use
   private _currentSplatMesh: {
     getSplatCount: () => number
     getSplatCenter: (index: number, out: THREE.Vector3) => void

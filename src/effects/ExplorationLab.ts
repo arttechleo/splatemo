@@ -31,13 +31,13 @@ export class ExplorationLab {
     scaleInAnimation: true,
     tapFocus: true,
     doubleTapLike: true,
-    rippleBurst: true,
-    revealSpotlight: true,
-    depthScrubbing: true,
-    memoryEchoes: true,
-    breathingPresence: false, // Off by default (subtle magic)
-    rarePulse: false, // Off by default
-    gyroGravityBias: false, // Off by default
+    rippleBurst: false, // OFF by default - clean demo
+    revealSpotlight: false, // OFF by default - clean demo
+    depthScrubbing: false, // OFF by default - clean demo
+    memoryEchoes: false, // OFF by default - clean demo
+    breathingPresence: false, // OFF by default - clean demo
+    rarePulse: false, // OFF by default - clean demo
+    gyroGravityBias: false, // OFF by default - clean demo
   }
   
   private configChangeCallbacks: Array<(config: LabConfig) => void> = []

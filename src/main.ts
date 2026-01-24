@@ -207,8 +207,8 @@ if (viewer.renderer) {
       if (explorationLab.getConfig().tapFocus) {
         // Recenter view
         resetView()
-        // Trigger focus effect
-        splatFocus.trigger()
+        // Clean focus animation (no particles)
+        applyTapFocusAnimation()
       }
     })
     
@@ -266,15 +266,12 @@ if (viewer.renderer) {
     
     // Start time effects update loop
     const updateTimeEffects = () => {
-      const vividMode = effectGovernor.getVividMode()
       timeEffects.update()
       
-      // Phase 3: Rare pulse (if enabled in lab)
-      if (explorationLab.getConfig().rarePulse) {
-        timeEffects.checkRarePulse(vividMode)
-      }
+      // Phase 3: Rare pulse disabled for clean demo (available in Lab toggle)
+      // No automatic rare pulse - keep experience calm
       
-      // Apply slow time factor to overlay
+      // Apply slow time factor to overlay (only if explicitly triggered)
       const slowTimeFactor = timeEffects.getSlowTimeFactor()
       splatTransitionOverlay.setSlowTimeFactor(slowTimeFactor)
       
@@ -776,14 +773,15 @@ const resetView = () => {
 
 /**
  * Apply scale-in animation when new splat lands.
+ * Clean, non-particle settle animation.
  */
 const applyScaleInAnimation = () => {
   const canvas = viewer.renderer?.domElement
   if (!canvas) return
   
-  // Add CSS animation class
-  canvas.style.transition = 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)'
-  canvas.style.transform = 'scale(0.95)'
+  // Subtle scale settle: gentle zoom-in effect
+  canvas.style.transition = 'transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+  canvas.style.transform = 'scale(0.97)'
   
   // Trigger reflow
   void canvas.offsetWidth
@@ -796,7 +794,37 @@ const applyScaleInAnimation = () => {
     setTimeout(() => {
       canvas.style.transition = ''
       canvas.style.transform = ''
-    }, 400)
+    }, 350)
+  })
+}
+
+/**
+ * Apply subtle clarity boost on tap focus.
+ * Clean, non-particle visual feedback.
+ */
+const applyTapFocusAnimation = () => {
+  const canvas = viewer.renderer?.domElement
+  if (!canvas) return
+  
+  // Subtle scale settle + slight brightness boost
+  canvas.style.transition = 'transform 0.3s ease-out, filter 0.3s ease-out'
+  canvas.style.transform = 'scale(0.98)'
+  canvas.style.filter = 'brightness(1.05)'
+  
+  // Trigger reflow
+  void canvas.offsetWidth
+  
+  // Animate back to normal
+  requestAnimationFrame(() => {
+    canvas.style.transform = 'scale(1)'
+    canvas.style.filter = 'brightness(1)'
+    
+    // Remove transition after animation
+    setTimeout(() => {
+      canvas.style.transition = ''
+      canvas.style.transform = ''
+      canvas.style.filter = ''
+    }, 300)
   })
 }
 

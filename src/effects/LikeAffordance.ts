@@ -7,8 +7,7 @@
 import { SplatTransitionOverlay } from '../transitions/SplatTransitionOverlay'
 
 export class LikeAffordance {
-  private overlay: SplatTransitionOverlay
-  private sourceCanvas: HTMLCanvasElement | null = null
+  private overlay: SplatTransitionOverlay // Reserved for future use
   private heartCanvas: HTMLCanvasElement | null = null
   private heartCtx: CanvasRenderingContext2D | null = null
   private heartRafId: number | null = null
@@ -34,7 +33,7 @@ export class LikeAffordance {
     this.heartCanvas.style.width = '100%'
     this.heartCanvas.style.height = '100%'
     this.heartCanvas.style.pointerEvents = 'none'
-    this.heartCanvas.style.zIndex = '16' // Above spotlight
+    this.heartCanvas.style.zIndex = '16' // Above other overlays, below UI (HUD is ~20)
     this.heartCanvas.style.opacity = '1'
     
     const dpr = Math.min(2, window.devicePixelRatio || 1)
@@ -60,8 +59,9 @@ export class LikeAffordance {
     this.heartCtx.scale(dpr, dpr)
   }
   
-  setSourceCanvas(canvas: HTMLCanvasElement | null): void {
-    this.sourceCanvas = canvas
+  setSourceCanvas(_canvas: HTMLCanvasElement | null): void {
+    // Not used - like affordance is UI-only (no particles)
+    void this.overlay // Suppress unused warning
   }
   
   /**
@@ -82,19 +82,7 @@ export class LikeAffordance {
       this.animate()
     }
     
-    // Also trigger subtle particle burst
-    if (this.sourceCanvas) {
-      const H = window.innerHeight
-      this.overlay.startAudioPulse({
-        bandCenterY: y,
-        bandHeight: H * 0.08,
-        direction: 'up',
-        intensity: 0.4,
-        durationMs: 400,
-        sourceCanvas: this.sourceCanvas,
-        intensityMultiplier: 1.3,
-      })
-    }
+    // No particle burst - UI-only heart animation
   }
   
   private animate = (): void => {

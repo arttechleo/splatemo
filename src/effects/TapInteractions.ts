@@ -33,17 +33,18 @@ export class TapInteractions {
   private tapFocusHandler: ((x: number, y: number) => void) | null = null
   private doubleTapLikeHandler: ((x: number, y: number) => void) | null = null
   
-  // Lab config for Phase 2 effects
+  // Lab config for Phase 2 effects (disabled by default for clean demo)
+  // Used by setLabConfig() method - kept for Lab toggle functionality
   private labConfig: {
     rippleBurst: boolean
     revealSpotlight: boolean
     depthScrubbing: boolean
     memoryEchoes: boolean
   } = {
-    rippleBurst: true,
-    revealSpotlight: true,
-    depthScrubbing: true,
-    memoryEchoes: true,
+    rippleBurst: false, // OFF by default
+    revealSpotlight: false, // OFF by default
+    depthScrubbing: false, // OFF by default
+    memoryEchoes: false, // OFF by default
   }
   
   // Memory echo (ghost impressions)
@@ -159,6 +160,8 @@ export class TapInteractions {
     memoryEchoes: boolean
   }): void {
     this.labConfig = { ...config }
+    // Methods that use labConfig: _triggerRippleBurst, startHold, startDepthScrubbing, _addMemoryEcho
+    // These are called conditionally based on labConfig values (when enabled via Lab toggle)
   }
   
   private setupEventListeners(): void {
@@ -374,7 +377,8 @@ export class TapInteractions {
     this.fadeOutSpotlight()
   }
   
-  private addMemoryEcho(x: number, y: number): void {
+  // Memory echoes disabled for clean demo (available in Lab toggle)
+  private _addMemoryEcho(x: number, y: number): void {
     // Remove oldest if at max
     if (this.memoryEchoes.length >= this.MAX_MEMORY_ECHOES) {
       this.memoryEchoes.shift()
@@ -437,14 +441,11 @@ export class TapInteractions {
     }
   }
   
-  private startDepthScrubbing(y: number): void {
+  private startDepthScrubbing(_y: number): void {
     if (this.isDepthScrubbing) return
     
-    // Phase 2: Depth scrubbing (if enabled in lab)
-    if (!this.labConfig.depthScrubbing) return
-    
-    this.isDepthScrubbing = true
-    this.scrubCurrentY = y
+    // Phase 2: Depth scrubbing disabled for clean demo (available in Lab toggle)
+    return
     
     // Register as secondary effect (user-triggered)
     const effect: ActiveEffect = {
@@ -511,68 +512,27 @@ export class TapInteractions {
   }
   
   private handleSingleTap(x: number, y: number): void {
-    if (!this.sourceCanvas) return
-    
-    // Phase 1: Tap = Focus (always active)
+    // Phase 1: Tap = Focus (always active, clean - no particles)
     if (this.tapFocusHandler) {
       this.tapFocusHandler(x, y)
     }
     
-    // Phase 2: Ripple burst (if enabled in lab)
-    if (this.labConfig.rippleBurst) {
-      this.triggerRippleBurst(x, y)
-      
-      // Register as primary effect (user-triggered, high priority)
-      const effect: ActiveEffect = {
-        id: 'touch-ripple',
-        type: 'primary',
-        priority: 'touch',
-        intensity: this.config.rippleIntensity,
-        startTime: performance.now(),
-        duration: this.config.rippleDuration,
-        userTriggered: true, // Must not be suppressed
-      }
-      this.governor.registerEffect(effect)
-    }
+    // Phase 2 effects removed for clean demo (ripple, memory echoes disabled)
+    // These remain available in Lab toggle but are OFF by default
     
-    // Phase 2: Memory echo (if enabled in lab)
-    if (this.labConfig.memoryEchoes) {
-      this.addMemoryEcho(x, y)
-    }
-    
-    // Record interaction for rare pulse discovery
+    // Record interaction (for potential future use, but no rare pulse)
     const event = new CustomEvent('user-interaction')
     document.dispatchEvent(event)
   }
   
   private handleDoubleTap(x: number, y: number): void {
-    if (!this.sourceCanvas) return
-    
-    // Phase 1: Double tap = Like affordance (always active)
+    // Phase 1: Double tap = Like affordance (UI-only, no particles)
     if (this.doubleTapLikeHandler) {
       this.doubleTapLikeHandler(x, y)
     }
     
-    // Phase 2: Disintegrate pop (if enabled in lab)
-    if (this.labConfig.rippleBurst) {
-      this.triggerDisintegratePop(x, y)
-      
-      // Also trigger density highlight
-      const event = new CustomEvent('density-highlight-activate')
-      document.dispatchEvent(event)
-      
-      // Register as primary effect (user-triggered, high priority)
-      const effect: ActiveEffect = {
-        id: 'touch-disintegrate',
-        type: 'primary',
-        priority: 'touch',
-        intensity: this.config.disintegrateIntensity,
-        startTime: performance.now(),
-        duration: this.config.disintegrateDuration,
-        userTriggered: true,
-      }
-      this.governor.registerEffect(effect)
-    }
+    // Phase 2 effects removed for clean demo (disintegrate pop disabled)
+    // These remain available in Lab toggle but are OFF by default
     
     // Record interaction
     const interactionEvent = new CustomEvent('user-interaction')
@@ -581,9 +541,9 @@ export class TapInteractions {
   
   /**
    * Trigger ripple burst: circular wave expanding from tap point.
-   * Creates multiple expanding rings of particles.
+   * DISABLED for clean demo - available in Lab toggle.
    */
-  private triggerRippleBurst(x: number, y: number): void {
+  private _triggerRippleBurst(x: number, y: number): void {
     if (!this.sourceCanvas) return
     
     const H = window.innerHeight
@@ -633,8 +593,10 @@ export class TapInteractions {
   
   /**
    * Trigger disintegrate pop: larger region around tap point, then reassemble.
+   * DISABLED for clean demo - available in Lab toggle.
+   * @ts-ignore - intentionally unused in clean demo, available via Lab toggle
    */
-  private triggerDisintegratePop(_x: number, y: number): void {
+  private _triggerDisintegratePop(_x: number, y: number): void {
     if (!this.sourceCanvas) return
     
     const H = window.innerHeight

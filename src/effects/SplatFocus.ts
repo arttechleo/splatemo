@@ -7,8 +7,7 @@
 import { SplatTransitionOverlay } from '../transitions/SplatTransitionOverlay'
 
 export class SplatFocus {
-  private overlay: SplatTransitionOverlay
-  private sourceCanvas: HTMLCanvasElement | null = null
+  private overlay: SplatTransitionOverlay // Reserved for future use
   private isActive = false
   private focusStartTime = 0
   private readonly FOCUS_DURATION = 800 // ms
@@ -18,8 +17,9 @@ export class SplatFocus {
     this.overlay = overlay
   }
   
-  setSourceCanvas(canvas: HTMLCanvasElement | null): void {
-    this.sourceCanvas = canvas
+  setSourceCanvas(_canvas: HTMLCanvasElement | null): void {
+    // Not used - clean demo uses CSS animations instead
+    void this.overlay // Suppress unused warning
   }
   
   /**
@@ -39,8 +39,7 @@ export class SplatFocus {
   }
   
   private animate = (): void => {
-    if (!this.isActive || !this.sourceCanvas) {
-      this.isActive = false
+    if (!this.isActive) {
       return
     }
     
@@ -48,22 +47,8 @@ export class SplatFocus {
     const elapsed = now - this.focusStartTime
     const progress = Math.min(1, elapsed / this.FOCUS_DURATION)
     
-    // Clarity boost: subtle particle pulse at center
-    if (progress < 0.5) {
-      // First half: clarity boost (particle pulse)
-      const intensity = (1 - progress * 2) * 0.3 // Fade from 0.3 to 0
-      const H = window.innerHeight
-      
-      this.overlay.startAudioPulse({
-        bandCenterY: H / 2,
-        bandHeight: H * 0.3,
-        direction: 'up',
-        intensity,
-        durationMs: 100,
-        sourceCanvas: this.sourceCanvas,
-        intensityMultiplier: 1.2,
-      })
-    }
+    // Clean clarity boost: subtle scale settle (no particles)
+    // Effect is handled via CSS transform on canvas element in main.ts
     
     if (progress >= 1) {
       this.isActive = false
