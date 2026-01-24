@@ -252,6 +252,10 @@ export class LooksLibrary {
     this.updateLook()
   }
   
+  getCurrentLook(): LookConfig {
+    return { ...this.currentLook }
+  }
+  
   private updateLook(): void {
     // Stop all animations
     this.stopAll()
@@ -318,18 +322,32 @@ export class LooksLibrary {
   
   /**
    * Film Grain: subtle animated grain (very low intensity).
+   * Throttled to 12-20fps for performance.
    */
   private startGrain(): void {
     if (!this.grainCtx || !this.grainCanvas) return
     
     const intensity = this.currentLook.intensity * 0.1 // Very low intensity
-    const grainSize = 1
+    let lastUpdate = 0
+    const targetFPS = 15 // Throttle to 15fps (between 12-20fps range)
+    const targetFrameTime = 1000 / targetFPS
     
     const animate = () => {
       if (this.currentLook.type !== 'film-grain' || !this.currentLook.enabled) {
         this.grainRafId = null
         return
       }
+      
+      const now = performance.now()
+      const elapsed = now - lastUpdate
+      
+      // Throttle: only update at target FPS (12-20fps range)
+      if (elapsed < targetFrameTime) {
+        this.grainRafId = requestAnimationFrame(animate)
+        return
+      }
+      
+      lastUpdate = now
       
       const W = window.innerWidth
       const H = window.innerHeight
@@ -485,6 +503,7 @@ export class LooksLibrary {
   
   /**
    * Trigger light leak sweep during feed transition.
+   * Throttled to 12-20fps for performance.
    */
   triggerLightLeak(direction: 'up' | 'down'): void {
     if (this.currentLook.type !== 'light-leak-sweep' || !this.currentLook.enabled) return
@@ -497,14 +516,26 @@ export class LooksLibrary {
     const W = window.innerWidth
     const H = window.innerHeight
     const duration = 700
+    const targetFPS = 15 // Throttle to 15fps (between 12-20fps range)
+    const targetFrameTime = 1000 / targetFPS
+    let lastUpdate = performance.now()
     
     const animate = () => {
-      const elapsed = performance.now() - this.lightLeakStartTime
+      const now = performance.now()
+      const elapsed = now - this.lightLeakStartTime
+      
       if (elapsed > duration || !this.lightLeakActive) {
         this.lightLeakCtx!.clearRect(0, 0, W, H)
         this.lightLeakActive = false
         return
       }
+      
+      // Throttle: only update at target FPS (12-20fps range)
+      if (now - lastUpdate < targetFrameTime) {
+        requestAnimationFrame(animate)
+        return
+      }
+      lastUpdate = now
       
       const progress = elapsed / duration
       const eased = 1 - Math.pow(1 - progress, 2) // Ease out

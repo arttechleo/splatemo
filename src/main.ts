@@ -25,6 +25,9 @@ import { CinematicSplitTransition } from './transitions/CinematicSplitTransition
 import { DepthDrift } from './effects/DepthDrift'
 import { LooksLibrary } from './effects/LooksLibrary'
 import { PerformanceOptimizer } from './effects/PerformanceOptimizer'
+import { PerformanceController } from './effects/PerformanceController'
+import { OverlayCompositor } from './effects/OverlayCompositor'
+import { PerformanceDebug } from './effects/PerformanceDebug'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -194,12 +197,31 @@ const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgen
 // Looks library (no arguments needed)
 const looksLibrary = new LooksLibrary(app)
 
-// Performance optimizer (adaptive quality controller)
+// Performance optimizer (adaptive quality controller) - legacy, kept for compatibility
 const performanceOptimizer = new PerformanceOptimizer({
   targetFPS: isMobile ? 30 : 60,
   lowFPSThreshold: isMobile ? 25 : 50,
   recoveryFPSThreshold: isMobile ? 28 : 55,
 })
+
+// Performance controller with quality tiers (HIGH/MED/LOW)
+const performanceController = new PerformanceController({
+  targetFPS: isMobile ? 30 : 60,
+  lowFPSThreshold: isMobile ? 25 : 50,
+  recoveryFPSThreshold: isMobile ? 28 : 55,
+})
+
+// Overlay compositor (single RAF loop for all effects)
+const overlayCompositor = new OverlayCompositor(app)
+overlayCompositor.start()
+
+// Wire performance controller to compositor
+performanceController.onTierChange((tier) => {
+  overlayCompositor.setQualityTier(tier)
+})
+
+// Performance debug (optional, off by default)
+const performanceDebug = new PerformanceDebug(app)
 const manifestUrl = '/splats/manifest.json'
 const ENABLE_VIEW_DEPENDENT_LOADING = false
 
@@ -247,10 +269,46 @@ if (viewer.renderer) {
     depthDrift.setSourceCanvas(viewer.renderer?.domElement ?? null)
     depthDrift.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3 } | null)
     
-    // Wire performance optimizer to depth drift
-    performanceOptimizer.onQualityChange((settings) => {
-      depthDrift.setQualityMultiplier(settings.particleCountMultiplier)
+  // Wire performance optimizer to depth drift (legacy)
+  performanceOptimizer.onQualityChange((settings) => {
+    depthDrift.setQualityMultiplier(settings.particleCountMultiplier)
+  })
+  
+    // Wire performance controller to depth drift (new quality tier system)
+  performanceController.onTierChange((tier) => {
+    const tierMultipliers = { HIGH: 1.0, MED: 0.7, LOW: 0.4 }
+    depthDrift.setQualityMultiplier(tierMultipliers[tier])
+  })
+  
+  // Periodic debug update (if visible) - update every 500ms
+  setInterval(() => {
+    const fps = performanceController.getCurrentFPS()
+    const frameTime = performanceController.getAverageFrameTime()
+    const tier = performanceController.getCurrentTier()
+    const config = overlayCompositor.getConfig()
+    
+    performanceDebug.update({
+      fps,
+      frameTime,
+      qualityTier: tier,
+      activeEffects: [
+        {
+          name: 'Depth Drift',
+          particleCount: Math.floor(1200 * config.particleCountMultiplier),
+          overlayDPR: config.overlayDPR,
+          updateRate: config.maskRefreshRate * 60,
+        },
+        {
+          name: 'Film Grain',
+          updateRate: config.grainUpdateRate,
+        },
+        {
+          name: 'Light Leak',
+          updateRate: config.lightLeakUpdateRate,
+        },
+      ],
     })
+  }, 500)
     
     tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
     tapInteractions.setConfig({ enabled: true })
@@ -1218,12 +1276,16 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   const sourceCanvas = viewer.renderer?.domElement ?? null
 
   // Pause audio effects, off-axis, and effects during transition
+  // Pause non-essential effects during navigation for smoother transitions
   audioWavelength.pause()
   audioPulseDriver.pause()
   offAxisCamera?.pause()
   performanceOptimizer.pause() // Pause FPS monitoring during transition
+  performanceController.pause() // Pause performance controller during transition
+  overlayCompositor.pause() // Pause compositor during transition
   effectsController.pause()
   depthDrift.pause() // Pause depth drift during transition
+  // Looks library effects pause automatically via their RAF loops when disabled
   tapInteractions.setTransitioning(true)
 
   // Use cinematic split transition for feed navigation
@@ -1280,8 +1342,12 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     audioPulseDriver.resume()
     offAxisCamera?.resume()
     effectsController.resume()
+    // Resume effects after transition (splat is settled and visible)
     depthDrift.resume() // Resume depth drift after transition
     performanceOptimizer.resume() // Resume FPS monitoring after transition
+    performanceController.resume() // Resume performance controller after transition
+    overlayCompositor.resume() // Resume compositor after transition
+    // Looks library will resume automatically when re-enabled
     tapInteractions.setTransitioning(false)
   }
   requestAnimationFrame(tick)

@@ -83,6 +83,8 @@ export class DepthDrift {
   private readonly MAX_WISPS = 1200 // Increased for visibility (was 800)
   private lastSampleTime = 0
   private readonly SAMPLE_INTERVAL = 2000 // Resample every 2 seconds
+  private lastMaskUpdate = 0
+  private readonly MASK_UPDATE_INTERVAL = 100 // Throttle mask refresh to ~10fps (100ms = 10fps)
   
   // Performance optimization
   private qualityMultiplier = 1.0 // 0-1, adjusted by PerformanceOptimizer
@@ -589,11 +591,16 @@ export class DepthDrift {
       return
     }
     
-    // Resample wisps periodically (longer interval when quality is low)
-    const sampleInterval = this.SAMPLE_INTERVAL * (2 - this.qualityMultiplier) // Longer interval when quality is low
-    if (now - this.lastSampleTime > sampleInterval) {
-      this.sampleWisps()
-      this.lastSampleTime = now
+    // Throttle expensive mask/sampling operations (6-10fps)
+    const maskUpdateInterval = this.MASK_UPDATE_INTERVAL * (2 - this.qualityMultiplier) // Longer when quality is low
+    if (now - this.lastMaskUpdate > maskUpdateInterval) {
+      // Resample wisps periodically (longer interval when quality is low)
+      const sampleInterval = this.SAMPLE_INTERVAL * (2 - this.qualityMultiplier) // Longer interval when quality is low
+      if (now - this.lastSampleTime > sampleInterval) {
+        this.sampleWisps()
+        this.lastSampleTime = now
+      }
+      this.lastMaskUpdate = now
     }
     
     // Update bands
