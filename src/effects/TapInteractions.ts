@@ -383,9 +383,8 @@ export class TapInteractions {
     const W = window.innerWidth
     const H = window.innerHeight
     
-    // Clear with fade
-    this.spotlightCtx.fillStyle = 'rgba(0, 0, 0, 0.02)'
-    this.spotlightCtx.fillRect(0, 0, W, H)
+    // Clear with no dimming (fully transparent)
+    this.spotlightCtx.clearRect(0, 0, W, H)
     
     // Draw echoes
     for (const echo of this.memoryEchoes) {
@@ -632,8 +631,8 @@ export class TapInteractions {
     const H = window.innerHeight
     
     // Clear with fade
-    this.spotlightCtx.fillStyle = 'rgba(0, 0, 0, 0.05)'
-    this.spotlightCtx.fillRect(0, 0, W, H)
+      // No dimming - use clearRect instead
+      this.spotlightCtx.clearRect(0, 0, W, H)
     
     // Grow spotlight while holding
     this.spotlightRadius = Math.min(180, this.spotlightRadius + 1.5)
@@ -714,7 +713,8 @@ export class TapInteractions {
     }
     
     // Clear with fade
-    this.spotlightCtx.fillStyle = 'rgba(0, 0, 0, 0.1)'
+    // No dimming - use clearRect instead
+    this.spotlightCtx.clearRect(0, 0, W, H)
     this.spotlightCtx.fillRect(0, 0, W, H)
     
     // Draw fading spotlight

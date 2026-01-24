@@ -508,7 +508,7 @@ canvas {
   bottom: 0;
   left: 0;
   right: 0;
-  background: rgba(20, 20, 25, 0.75);
+  background: transparent; /* No dimming - fully transparent */
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-top: 1px solid var(--glass-border);
@@ -524,13 +524,13 @@ canvas {
 
 @supports not (backdrop-filter: blur(20px)) {
   .hud__comment-panel {
-    background: rgba(20, 20, 25, 0.92);
+    background: transparent; /* No dimming */
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .hud__comment-panel {
-    background: rgba(20, 20, 25, 0.92);
+    background: transparent; /* No dimming */
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
@@ -856,7 +856,7 @@ canvas {
   right: var(--space-2);
   top: 50%;
   transform: translateY(-50%) translateX(120%);
-  background: rgba(20, 20, 25, 0.85);
+  background: transparent; /* No dimming - fully transparent */
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
@@ -872,7 +872,7 @@ canvas {
 
 @supports not (backdrop-filter: blur(20px)) {
   .hud__effects-panel {
-    background: rgba(20, 20, 25, 0.95);
+    background: transparent; /* No dimming */
   }
 }
 
@@ -895,7 +895,7 @@ canvas {
   right: var(--space-2);
   top: 50%;
   transform: translateY(-50%) translateX(120%);
-  background: rgba(20, 20, 25, 0.85);
+  background: transparent; /* No dimming - fully transparent */
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
@@ -911,7 +911,7 @@ canvas {
 
 @supports not (backdrop-filter: blur(20px)) {
   .hud__discovery-panel {
-    background: rgba(20, 20, 25, 0.95);
+    background: transparent; /* No dimming */
   }
 }
 

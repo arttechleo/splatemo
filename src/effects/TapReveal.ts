@@ -126,9 +126,8 @@ export class TapReveal {
     const W = window.innerWidth
     const H = window.innerHeight
     
-    // Clear with fade
-    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
-    this.ctx.fillRect(0, 0, W, H)
+    // Clear with no dimming (fully transparent)
+    this.ctx.clearRect(0, 0, W, H)
     
     // Update reveal
     if (this.isPressed) {
