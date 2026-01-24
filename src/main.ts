@@ -9,15 +9,10 @@ import { AudioPulseDriver } from './effects/AudioPulseDriver'
 import { OffAxisCamera } from './effects/OffAxisCamera'
 import { ColorSampler } from './effects/ColorSampler'
 import { EffectsController } from './effects/EffectsController'
-import { Discovery } from './effects/Discovery'
-import { TapReveal } from './effects/TapReveal'
 import { TapInteractions } from './effects/TapInteractions'
 import { EffectGovernor } from './effects/EffectGovernor'
-import { IdleEffects } from './effects/IdleEffects'
-import { MotionEffects } from './effects/MotionEffects'
 import { TimeEffects } from './effects/TimeEffects'
 import { InterpretiveEffects } from './effects/InterpretiveEffects'
-import { DiscoveryOnboarding } from './effects/DiscoveryOnboarding'
 import { MicroFeedback } from './effects/MicroFeedback'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
@@ -111,52 +106,10 @@ hudResult.setEffectsConfigChangeHandler((config) => {
     boost: config.boost || 1.0,
   })
   
-  // Apply discovery mode effects
-  const discoveryConfig = discovery.getConfig()
-  if (discoveryConfig.mode === 'calm') {
-    // Calm mode: effects off or subtle
-    if (config.preset !== 'none') {
-      effectsController.setConfig({ intensity: config.intensity * 0.3 })
-    }
-  } else if (discoveryConfig.mode === 'vivid') {
-    // Vivid mode: effects intensity up
-    if (config.preset !== 'none') {
-      effectsController.setConfig({ intensity: Math.min(1.0, config.intensity * 1.5) })
-    }
-  }
+  // Discovery disabled - no mode-based effects
 })
 
-hudResult.setDiscoveryModeChangeHandler((mode: string) => {
-  discovery.setConfig({ mode: mode as any, enabled: true })
-  
-  // Apply mode-specific effects
-  const effectsConfig = effectsController.getConfig()
-  if (mode === 'calm' && effectsConfig.enabled) {
-    effectsController.setConfig({ intensity: effectsConfig.intensity * 0.3 })
-  } else if (mode === 'vivid' && effectsConfig.enabled) {
-    effectsController.setConfig({ intensity: Math.min(1.0, effectsConfig.intensity * 1.5) })
-  }
-  
-  // Enable/disable tap reveal
-  tapReveal.setEnabled(mode === 'inspect')
-  
-  // Disable Discovery effects in Inspect mode
-  if (mode === 'inspect') {
-    effectGovernor.clearAll()
-    idleEffects.stop()
-    motionEffects.disable()
-  } else {
-    idleEffects.start()
-    const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-    if (isMobile) {
-      motionEffects.enable()
-    }
-  }
-})
-
-hudResult.setNextPoseHandler(() => {
-  discovery.nextPose()
-})
+// Discovery mode disabled - removed handlers
 
 hudResult.setVividModeToggleHandler((enabled: boolean) => {
   effectGovernor.setVividMode(enabled)
@@ -165,8 +118,7 @@ hudResult.setVividModeToggleHandler((enabled: boolean) => {
   const vividMultiplier = effectGovernor.getVividMultiplier()
   splatTransitionOverlay.setVividMultiplier(vividMultiplier)
   
-  // Set normal mode for idle effects (reduced in normal mode)
-  idleEffects.setNormalMode(!enabled)
+  // Idle effects disabled - no mode switching needed
   
   // Boost existing effects
   if (enabled) {
@@ -241,28 +193,13 @@ if (viewer.renderer) {
     audioPulseDriver.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setSourceCanvas(viewer.renderer?.domElement ?? null)
     effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
-    discovery.setCamera(viewer.camera, viewer.controls as {
-      target?: THREE.Vector3
-      enableZoom?: boolean
-      minDistance?: number
-      maxDistance?: number
-      autoRotate?: boolean
-      autoRotateSpeed?: number
-    } | null)
     tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
     tapInteractions.setConfig({ enabled: true })
-    idleEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
     timeEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
     interpretiveEffects.setSourceCanvas(viewer.renderer?.domElement ?? null)
     
-    // Start idle effects
-    idleEffects.start()
-    
-    // Start motion effects (if on mobile)
-    const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-    if (isMobile) {
-      motionEffects.enable()
-    }
+    // Idle effects disabled - effects only via explicit interaction or Vivid mode
+    // Motion effects disabled - effects only via explicit interaction or Vivid mode
     
     // Start time effects update loop
     const updateTimeEffects = () => {
@@ -302,11 +239,6 @@ if (viewer.renderer) {
     
     // Setup debug overlay (temporary)
     setupEffectDebugOverlay()
-    
-    // Show discovery onboarding (one-time, after 1 second)
-    setTimeout(() => {
-      discoveryOnboarding.show()
-    }, 1000)
   }, 0)
   
   // Debug overlay setup
@@ -400,17 +332,12 @@ const audioWavelength = new AudioWavelength(app)
 const annotationManager = new AnnotationManager(annotationsRoot)
 const audioPulseDriver = new AudioPulseDriver(splatTransitionOverlay, null, null, null)
 const effectsController = new EffectsController(splatTransitionOverlay)
-const discovery = new Discovery()
-const tapReveal = new TapReveal()
 
-// Discovery Effects System
+// Effects System (Discovery disabled - no idle/motion auto-effects)
 const effectGovernor = new EffectGovernor()
-const idleEffects = new IdleEffects(splatTransitionOverlay, effectGovernor)
-const motionEffects = new MotionEffects(effectGovernor)
 const timeEffects = new TimeEffects(splatTransitionOverlay, effectGovernor)
 const interpretiveEffects = new InterpretiveEffects(splatTransitionOverlay, effectGovernor)
 const tapInteractions = new TapInteractions(splatTransitionOverlay, effectGovernor)
-const discoveryOnboarding = new DiscoveryOnboarding()
 const microFeedback = new MicroFeedback(splatTransitionOverlay)
 
 // Off-axis camera will be initialized after viewer camera is ready
@@ -429,14 +356,7 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   
   // Update camera reference for effects (for parallax)
   effectsController.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3; getAzimuthalAngle?: () => number } | null)
-  discovery.setCamera(viewer.camera, viewer.controls as {
-    target?: THREE.Vector3
-    enableZoom?: boolean
-    minDistance?: number
-    maxDistance?: number
-    autoRotate?: boolean
-    autoRotateSpeed?: number
-  } | null)
+  // Discovery disabled - removed camera setup
   
   // Handle scene removal (splatMesh is null/undefined)
   if (!splatMesh) {

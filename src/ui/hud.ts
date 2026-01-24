@@ -47,9 +47,6 @@ export const createHUD = () => {
       <button class="hud__button hud__button--effects" type="button" aria-label="Effects">
         <span class="hud__icon">✨</span>
       </button>
-      <button class="hud__button hud__button--discovery" type="button" aria-label="Discovery">
-        <span class="hud__icon">🎯</span>
-      </button>
       <button class="hud__button hud__button--vivid" type="button" aria-label="Vivid Mode">
         <span class="hud__icon">✨</span>
         <span class="hud__label">Vivid</span>
@@ -88,30 +85,6 @@ export const createHUD = () => {
           <label class="hud__effects-label">Intensity</label>
           <input type="range" class="hud__effects-slider" id="effects-intensity" min="0" max="1" step="0.01" value="0.5">
           <span class="hud__effects-value" id="effects-intensity-value">50%</span>
-        </div>
-      </div>
-    </div>
-    
-    <div class="hud__discovery-panel">
-      <div class="hud__discovery-header">
-        <h3>Discovery</h3>
-        <button class="hud__close hud__close--discovery" type="button" aria-label="Close">×</button>
-      </div>
-      <div class="hud__discovery-content">
-        <div class="hud__discovery-control">
-          <label class="hud__discovery-label">Mode</label>
-          <select class="hud__discovery-select" id="discovery-mode">
-            <option value="calm" selected>Calm</option>
-            <option value="vivid">Vivid</option>
-            <option value="gallery">Gallery</option>
-            <option value="inspect">Inspect</option>
-          </select>
-        </div>
-        <div class="hud__discovery-control">
-          <button class="hud__button hud__button--next-pose" type="button" id="next-pose-button">
-            <span class="hud__icon">↻</span>
-            <span class="hud__label">Next Angle</span>
-          </button>
         </div>
       </div>
     </div>
@@ -472,12 +445,7 @@ export const createHUD = () => {
   const effectsButton = hud.querySelector<HTMLButtonElement>('.hud__button--effects')
   const effectsPanel = hud.querySelector<HTMLDivElement>('.hud__effects-panel')
   
-  // Discovery button
-  const discoveryButton = hud.querySelector<HTMLButtonElement>('.hud__button--discovery')
-  const discoveryPanel = hud.querySelector<HTMLDivElement>('.hud__discovery-panel')
-  const discoveryCloseButton = hud.querySelector<HTMLButtonElement>('.hud__close--discovery')
-  const discoveryModeSelect = hud.querySelector<HTMLSelectElement>('#discovery-mode')
-  const nextPoseButton = hud.querySelector<HTMLButtonElement>('#next-pose-button')
+  // Discovery disabled - removed UI elements
   
   // Vivid mode button
   const vividButton = hud.querySelector<HTMLButtonElement>('.hud__button--vivid')
@@ -488,8 +456,7 @@ export const createHUD = () => {
   const effectsIntensitySlider = hud.querySelector<HTMLInputElement>('#effects-intensity')
   const effectsIntensityValue = hud.querySelector<HTMLSpanElement>('#effects-intensity-value')
   let onEffectsConfigChange: ((config: { preset: string; intensity: number; enabled: boolean; intensityPreset?: string; boost?: number }) => void) | null = null
-  let onDiscoveryModeChange: ((mode: string) => void) | null = null
-  let onNextPose: (() => void) | null = null
+  // Discovery disabled - removed handlers
   let onVividModeToggle: ((enabled: boolean) => void) | null = null
   let isEffectsPanelOpen = false
 
@@ -499,62 +466,14 @@ export const createHUD = () => {
       isEffectsPanelOpen = !isEffectsPanelOpen
       effectsPanel.classList.toggle('hud__effects-panel--open', isEffectsPanelOpen)
       effectsButton.classList.toggle('hud__button--active', isEffectsPanelOpen)
-      // Close discovery panel if open
-      if (discoveryPanel) {
-        discoveryPanel.classList.remove('hud__discovery-panel--visible')
-      }
+      // Discovery disabled
     })
     effectsButton.addEventListener('pointerdown', (e) => {
       e.stopPropagation()
     })
   }
   
-  if (discoveryButton && discoveryPanel) {
-    discoveryButton.addEventListener('click', (e) => {
-      e.stopPropagation()
-      discoveryPanel.classList.toggle('hud__discovery-panel--visible')
-      // Close effects panel if open
-      if (effectsPanel) {
-        effectsPanel.classList.remove('hud__effects-panel--open')
-        effectsButton?.classList.remove('hud__button--active')
-        isEffectsPanelOpen = false
-      }
-    })
-    discoveryButton.addEventListener('pointerdown', (e) => {
-      e.stopPropagation()
-    })
-  }
-  
-  if (discoveryCloseButton && discoveryPanel) {
-    discoveryCloseButton.addEventListener('click', (e) => {
-      e.stopPropagation()
-      discoveryPanel.classList.remove('hud__discovery-panel--visible')
-    })
-    discoveryCloseButton.addEventListener('pointerdown', (e) => {
-      e.stopPropagation()
-    })
-  }
-  
-  if (discoveryModeSelect) {
-    discoveryModeSelect.addEventListener('change', (e) => {
-      e.stopPropagation()
-      if (onDiscoveryModeChange) {
-        onDiscoveryModeChange(discoveryModeSelect.value)
-      }
-    })
-  }
-  
-  if (nextPoseButton) {
-    nextPoseButton.addEventListener('click', (e) => {
-      e.stopPropagation()
-      if (onNextPose) {
-        onNextPose()
-      }
-    })
-    nextPoseButton.addEventListener('pointerdown', (e) => {
-      e.stopPropagation()
-    })
-  }
+  // Discovery disabled - removed event listeners
   
   if (vividButton) {
     vividButton.addEventListener('click', (e) => {
@@ -639,13 +558,7 @@ export const createHUD = () => {
     onEffectsConfigChange = handler
   }
   
-  const setDiscoveryModeChangeHandler = (handler: (mode: string) => void) => {
-    onDiscoveryModeChange = handler
-  }
-  
-  const setNextPoseHandler = (handler: () => void) => {
-    onNextPose = handler
-  }
+  // Discovery disabled - removed handlers
 
   // Off-Axis status indicator update function
   const updateOffAxisStatus = (status: 'idle' | 'tracking' | 'error') => {
@@ -678,8 +591,6 @@ export const createHUD = () => {
     setSoundModeToggleHandler,
     setOffAxisToggleHandler,
     setEffectsConfigChangeHandler,
-    setDiscoveryModeChangeHandler,
-    setNextPoseHandler,
     setVividModeToggleHandler,
     getVividMode,
     updateOffAxisStatus,
