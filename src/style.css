@@ -468,8 +468,7 @@ canvas {
 }
 
 .hud__button--primary .hud__label {
-  margin-top: 0;
-  font-size: var(--font-size-sm);
+  display: none; /* Icon-only recenter button */
 }
 
 /* ============================================

@@ -110,7 +110,6 @@ export const createHUD = () => {
     <div class="hud__reset-container">
       <button class="hud__button hud__button--reset hud__button--primary" type="button" aria-label="Reset View">
         <span class="hud__icon">⌂</span>
-        <span class="hud__label">Recenter</span>
       </button>
     </div>
 

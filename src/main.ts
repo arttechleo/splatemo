@@ -24,6 +24,7 @@ import { FilmicOverlays } from './effects/FilmicOverlays'
 import { CinematicSplitTransition } from './transitions/CinematicSplitTransition'
 import { DepthDrift } from './effects/DepthDrift'
 import { LooksLibrary } from './effects/LooksLibrary'
+import { PerformanceOptimizer } from './effects/PerformanceOptimizer'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -186,12 +187,19 @@ const filmicOverlays = new FilmicOverlays(app)
 // Depth Drift effect
 const depthDrift = new DepthDrift(app)
 
-// Looks library (no arguments needed)
-const looksLibrary = new LooksLibrary(app)
-
 // Bottom loading indicator removed - using top HUD loading bar only
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+
+// Looks library (no arguments needed)
+const looksLibrary = new LooksLibrary(app)
+
+// Performance optimizer (adaptive quality controller)
+const performanceOptimizer = new PerformanceOptimizer({
+  targetFPS: isMobile ? 30 : 60,
+  lowFPSThreshold: isMobile ? 25 : 50,
+  recoveryFPSThreshold: isMobile ? 28 : 55,
+})
 const manifestUrl = '/splats/manifest.json'
 const ENABLE_VIEW_DEPENDENT_LOADING = false
 
@@ -239,6 +247,11 @@ if (viewer.renderer) {
     depthDrift.setSourceCanvas(viewer.renderer?.domElement ?? null)
     depthDrift.setCamera(viewer.camera, viewer.controls as { target?: THREE.Vector3 } | null)
     
+    // Wire performance optimizer to depth drift
+    performanceOptimizer.onQualityChange((settings) => {
+      depthDrift.setQualityMultiplier(settings.particleCountMultiplier)
+    })
+    
     tapInteractions.setSourceCanvas(viewer.renderer?.domElement ?? null)
     tapInteractions.setConfig({ enabled: true })
     
@@ -255,6 +268,27 @@ if (viewer.renderer) {
     tapInteractions.setDoubleTapLikeHandler((x: number, y: number) => {
       if (explorationLab.getConfig().doubleTapLike) {
         likeAffordance.trigger(x, y)
+      }
+      
+      // Double-tap zoom: zoom in to a sensible closer distance
+      const camera = viewer.camera
+      const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+      if (camera && controls?.target) {
+        const MIN_DISTANCE = 0.8
+        const currentDistance = camera.position.distanceTo(controls.target)
+        const zoomInDistance = Math.max(MIN_DISTANCE, currentDistance * 0.6) // Zoom to 60% of current distance
+        
+        // Set camera distance (inline function to avoid scope issues)
+        const clamped = Math.max(MIN_DISTANCE, Math.min(20, zoomInDistance))
+        const direction = camera.position.clone().sub(controls.target).normalize()
+        camera.position.copy(controls.target).add(direction.multiplyScalar(clamped))
+        camera.lookAt(controls.target)
+        
+        // Update OrbitControls if available
+        const orbitControls = viewer.controls as unknown as { update?: () => void } | null
+        if (orbitControls?.update) {
+          orbitControls.update()
+        }
       }
     })
     
@@ -1184,6 +1218,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   audioWavelength.pause()
   audioPulseDriver.pause()
   offAxisCamera?.pause()
+  performanceOptimizer.pause() // Pause FPS monitoring during transition
   effectsController.pause()
   depthDrift.pause() // Pause depth drift during transition
   tapInteractions.setTransitioning(true)
@@ -1243,6 +1278,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     offAxisCamera?.resume()
     effectsController.resume()
     depthDrift.resume() // Resume depth drift after transition
+    performanceOptimizer.resume() // Resume FPS monitoring after transition
     tapInteractions.setTransitioning(false)
   }
   requestAnimationFrame(tick)
@@ -1284,7 +1320,22 @@ const setupSplatNavigation = () => {
   let initialOrbitPitch = 0
   const MIN_DISTANCE = 0.8
   const MAX_DISTANCE = 20
-  const ZOOM_SENSITIVITY = 0.015
+  
+  // Double-tap zoom function (used by tapInteractions)
+  const setCameraDistance = (distance: number): void => {
+    const camera = viewer.camera
+    const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
+    if (!camera || !controls?.target) return
+
+    const clamped = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, distance))
+    const direction = camera.position.clone().sub(controls.target).normalize()
+    camera.position.copy(controls.target).add(direction.multiplyScalar(clamped))
+    camera.lookAt(controls.target)
+  }
+  // Slower pinch zoom-out for more controlled feel
+  // Asymmetric: zoom-in is faster, zoom-out is slower
+  const ZOOM_IN_SENSITIVITY = 0.015 // Fingers apart = zoom in
+  const ZOOM_OUT_SENSITIVITY = 0.008 // Fingers together = zoom out (slower)
   const ORBIT_SENSITIVITY = 0.008
   const PITCH_MAX = 15 * (Math.PI / 180) // 15 degrees in radians
   const PINCH_THRESHOLD_PX = 15 // pixels of distance change to detect pinch
@@ -1309,17 +1360,8 @@ const setupSplatNavigation = () => {
     if (!camera || !controls?.target) return 6
     return camera.position.distanceTo(controls.target)
   }
-
-  const setCameraDistance = (distance: number): void => {
-    const camera = viewer.camera
-    const controls = viewer.controls as unknown as { target?: THREE.Vector3 } | null
-    if (!camera || !controls?.target) return
-
-    const clamped = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, distance))
-    const direction = camera.position.clone().sub(controls.target).normalize()
-    camera.position.copy(controls.target).add(direction.multiplyScalar(clamped))
-    camera.lookAt(controls.target)
-  }
+  
+  // setCameraDistance is defined above (before handleTouchStart)
 
   const handleTouchStart = (event: TouchEvent) => {
     // Don't interfere with HUD interactions
@@ -1438,8 +1480,9 @@ const setupSplatNavigation = () => {
         const distanceDelta = currentDistance - initialPinchDistance
         // Fingers apart (positive delta) = zoom IN (decrease camera distance)
         // Fingers together (negative delta) = zoom OUT (increase camera distance)
-        // Scale factor: positive delta reduces distance, negative delta increases distance
-        const scaleFactor = 1 - distanceDelta * ZOOM_SENSITIVITY
+        // Asymmetric sensitivity: zoom-out is slower for more controlled feel
+        const sensitivity = distanceDelta > 0 ? ZOOM_IN_SENSITIVITY : ZOOM_OUT_SENSITIVITY
+        const scaleFactor = 1 - distanceDelta * sensitivity
         const newDistance = initialCameraDistance * scaleFactor
         setCameraDistance(newDistance)
 

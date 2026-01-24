@@ -84,6 +84,14 @@ export class DepthDrift {
   private lastSampleTime = 0
   private readonly SAMPLE_INTERVAL = 2000 // Resample every 2 seconds
   
+  // Performance optimization
+  private qualityMultiplier = 1.0 // 0-1, adjusted by PerformanceOptimizer
+  private effectiveMaxWisps = 1200
+  private effectiveWispSize = 18
+  private effectiveWispAlpha = 0.25
+  private updateFrameSkip = 0 // Skip frames when quality is low
+  private updateFrameCounter = 0
+  
   // Edge highlight overlay for active bands
   private highlightCanvas: HTMLCanvasElement | null = null
   private highlightCtx: CanvasRenderingContext2D | null = null
@@ -151,6 +159,10 @@ export class DepthDrift {
     }
     
     if (this.highlightCanvas && this.highlightCtx) {
+      // Cap DPR on mobile for performance
+      const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      const maxDPR = isMobile ? 1.5 : 2
+      const dpr = Math.min(maxDPR, window.devicePixelRatio || 1)
       this.highlightCanvas.width = window.innerWidth * dpr
       this.highlightCanvas.height = window.innerHeight * dpr
       this.highlightCtx.setTransform(1, 0, 0, 1, 0, 0)
@@ -174,6 +186,24 @@ export class DepthDrift {
     } else if (this.config.enabled && !this.isActive && !this.isPaused) {
       this.start()
     }
+    this.updateEffectiveSettings()
+  }
+  
+  /**
+   * Set quality multiplier from PerformanceOptimizer (0-1).
+   */
+  setQualityMultiplier(multiplier: number): void {
+    this.qualityMultiplier = Math.max(0.3, Math.min(1.0, multiplier))
+    this.updateEffectiveSettings()
+  }
+  
+  /**
+   * Update effective settings based on quality multiplier.
+   */
+  private updateEffectiveSettings(): void {
+    this.effectiveMaxWisps = Math.floor(this.MAX_WISPS * this.qualityMultiplier)
+    this.effectiveWispSize = this.config.wispSize * this.qualityMultiplier
+    this.effectiveWispAlpha = this.config.wispAlpha * this.qualityMultiplier
   }
   
   /**
@@ -515,8 +545,9 @@ export class DepthDrift {
     const y = wisp.baseY + sineY + noiseY
     
     // Draw soft wisp (radial gradient for softness, not dots)
-    const size = wisp.size * (1 + excitement * 0.3)
-    const alpha = wisp.alpha * intensity * (1 + excitement * 0.5)
+    // Apply quality multiplier to size and alpha
+    const size = this.effectiveWispSize * (1 + excitement * 0.3)
+    const alpha = this.effectiveWispAlpha * intensity * (1 + excitement * 0.5)
     
     this.ctx.save()
     this.ctx.globalAlpha = alpha
@@ -550,8 +581,17 @@ export class DepthDrift {
     
     const now = performance.now()
     
-    // Resample wisps periodically
-    if (now - this.lastSampleTime > this.SAMPLE_INTERVAL) {
+    // Skip frames when quality is low (throttle update rate)
+    this.updateFrameCounter++
+    const shouldUpdate = this.qualityMultiplier >= 0.7 || this.updateFrameCounter % Math.ceil(1 / this.qualityMultiplier) === 0
+    if (!shouldUpdate) {
+      this.rafId = requestAnimationFrame(this.animate)
+      return
+    }
+    
+    // Resample wisps periodically (longer interval when quality is low)
+    const sampleInterval = this.SAMPLE_INTERVAL * (2 - this.qualityMultiplier) // Longer interval when quality is low
+    if (now - this.lastSampleTime > sampleInterval) {
       this.sampleWisps()
       this.lastSampleTime = now
     }
