@@ -86,6 +86,19 @@ export const createHUD = () => {
           <input type="range" class="hud__effects-slider" id="effects-intensity" min="0" max="1" step="0.01" value="0.5">
           <span class="hud__effects-value" id="effects-intensity-value">50%</span>
         </div>
+        <div class="hud__effects-control">
+          <label class="hud__effects-label">Filmic Overlays</label>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="filmic-vignette" style="cursor: pointer;">
+              <span>Vignette</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="filmic-grain" style="cursor: pointer;">
+              <span>Grain</span>
+            </label>
+          </div>
+        </div>
       </div>
     </div>
     
@@ -558,6 +571,32 @@ export const createHUD = () => {
     onEffectsConfigChange = handler
   }
   
+  // Filmic overlays handlers
+  let onFilmicOverlayChange: ((config: { vignetteEnabled: boolean; grainEnabled: boolean }) => void) | null = null
+  
+  const setFilmicOverlayChangeHandler = (handler: (config: { vignetteEnabled: boolean; grainEnabled: boolean }) => void) => {
+    onFilmicOverlayChange = handler
+    
+    const vignetteCheckbox = hud.querySelector<HTMLInputElement>('#filmic-vignette')
+    const grainCheckbox = hud.querySelector<HTMLInputElement>('#filmic-grain')
+    
+    const updateFilmicConfig = () => {
+      if (onFilmicOverlayChange) {
+        onFilmicOverlayChange({
+          vignetteEnabled: vignetteCheckbox?.checked ?? false,
+          grainEnabled: grainCheckbox?.checked ?? false,
+        })
+      }
+    }
+    
+    if (vignetteCheckbox) {
+      vignetteCheckbox.addEventListener('change', updateFilmicConfig)
+    }
+    if (grainCheckbox) {
+      grainCheckbox.addEventListener('change', updateFilmicConfig)
+    }
+  }
+  
   // Discovery disabled - removed handlers
 
   // Off-Axis status indicator update function
@@ -601,5 +640,6 @@ export const createHUD = () => {
       commentMicroFeedbackHandler = handler
       shareMicroFeedbackHandler = handler
     },
+    setFilmicOverlayChangeHandler,
   }
 }

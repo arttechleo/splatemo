@@ -20,6 +20,8 @@ import { LikeAffordance } from './effects/LikeAffordance'
 import { ExplorationLab } from './effects/ExplorationLab'
 import { IdleEffects } from './effects/IdleEffects'
 import { MotionEffects } from './effects/MotionEffects'
+import { FilmicOverlays } from './effects/FilmicOverlays'
+import { CinematicSplitTransition } from './transitions/CinematicSplitTransition'
 import { createOverlay } from './ui/overlay'
 import { createHUD } from './ui/hud'
 
@@ -154,6 +156,10 @@ app.appendChild(annotationsRoot)
 const overlay = createOverlay()
 app.appendChild(overlay)
 
+// Cinematic transitions and filmic overlays
+const cinematicSplitTransition = new CinematicSplitTransition(app)
+const filmicOverlays = new FilmicOverlays(app)
+
 // Bottom loading indicator removed - using top HUD loading bar only
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
@@ -262,6 +268,14 @@ if (viewer.renderer) {
       } else {
         motionEffects.disable()
       }
+    })
+    
+    // Wire filmic overlays controls
+    hudResult.setFilmicOverlayChangeHandler((config: { vignetteEnabled: boolean; grainEnabled: boolean }) => {
+      filmicOverlays.setConfig({
+        vignetteEnabled: config.vignetteEnabled,
+        grainEnabled: config.grainEnabled,
+      })
     })
     
     // Start time effects update loop
@@ -806,8 +820,8 @@ const applyTapFocusAnimation = () => {
   const canvas = viewer.renderer?.domElement
   if (!canvas) return
   
-  // Subtle scale settle + slight brightness boost
-  canvas.style.transition = 'transform 0.3s ease-out, filter 0.3s ease-out'
+  // Cinematic focus: polished filmic easing with clarity boost
+  canvas.style.transition = 'transform 0.35s cubic-bezier(0.22, 1.0, 0.36, 1.0), filter 0.35s cubic-bezier(0.22, 1.0, 0.36, 1.0)'
   canvas.style.transform = 'scale(0.98)'
   canvas.style.filter = 'brightness(1.05)'
   
@@ -824,7 +838,7 @@ const applyTapFocusAnimation = () => {
       canvas.style.transition = ''
       canvas.style.transform = ''
       canvas.style.filter = ''
-    }, 300)
+    }, 350)
   })
 }
 
@@ -1127,6 +1141,11 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   effectsController.pause()
   tapInteractions.setTransitioning(true)
 
+  // Use cinematic split transition for feed navigation
+  const splitDirection = direction === 'next' ? 'down' : 'up'
+  cinematicSplitTransition.startTransition(splitDirection, sourceCanvas)
+  
+  // Keep existing disintegrate as fallback/alternative
   if (isMobile) {
     splatTransitionOverlay.startTransition(
       direction === 'next' ? 'up' : 'down',
@@ -1137,7 +1156,7 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   }
 
   const transitionStart = performance.now()
-  const transitionDuration = isMobile ? 600 : 750 // Consistent 600ms for mobile
+  const transitionDuration = 700 // 700ms for cinematic feel (600-800ms range)
   const renderModeSetter = viewer as unknown as { setRenderMode?: (mode: number) => void }
   renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.Always)
   
@@ -1153,6 +1172,10 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
     await loadSplat(targetIndex)
     renderModeSetter.setRenderMode?.(GaussianSplats3D.RenderMode.OnChange)
     isTransitioning = false
+    
+    // End cinematic split transition
+    cinematicSplitTransition.stop()
+    
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
