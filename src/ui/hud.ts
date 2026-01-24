@@ -170,6 +170,7 @@ export const createHUD = () => {
   let shareMicroFeedbackHandler: ((type: 'like' | 'save' | 'share' | 'comment' | 'recenter', element: HTMLElement, x?: number, y?: number) => void) | null = null
 
   // Like handler
+  // UI interactions must never spawn particles or dots. This is intentional for product polish.
   if (likeButton && likeCountEl) {
     likeButton.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -177,7 +178,8 @@ export const createHUD = () => {
       const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
       const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
       
-      // Trigger micro-feedback
+      // UI interactions must never spawn particles or dots. This is intentional for product polish.
+      // Trigger micro-feedback (UI-only: scale, opacity, glow, haptic - NO particles, NO dots, NO circles)
       if (likeMicroFeedbackHandler) {
         likeMicroFeedbackHandler('like', likeButton, tapX, tapY)
       }
@@ -231,6 +233,7 @@ export const createHUD = () => {
   }
 
   // Bookmark handler
+  // UI interactions must never spawn particles or dots. This is intentional for product polish.
   if (bookmarkButton) {
     bookmarkButton.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -238,7 +241,8 @@ export const createHUD = () => {
       const tapX = (e as MouseEvent).clientX || rect.left + rect.width / 2
       const tapY = (e as MouseEvent).clientY || rect.top + rect.height / 2
       
-      // Trigger micro-feedback
+      // UI interactions must never spawn particles or dots. This is intentional for product polish.
+      // Trigger micro-feedback (UI-only: scale, opacity, glow, haptic - NO particles, NO dots, NO circles)
       if (bookmarkMicroFeedbackHandler) {
         bookmarkMicroFeedbackHandler('save', bookmarkButton, tapX, tapY)
       }

@@ -4,6 +4,8 @@
  * - Button animations (scale, pulse, glow) - UI-only
  * - Haptic feedback (mobile)
  * - NO particle bursts or canvas circles
+ * 
+ * UI interactions must never spawn particles or dots. This is intentional for product polish.
  */
 
 export type FeedbackType = 'like' | 'save' | 'share' | 'comment' | 'recenter'
@@ -44,11 +46,13 @@ export class MicroFeedback {
   /**
    * Trigger micro-feedback for a button interaction.
    * UI-only: animations and haptics, no particles.
+   * UI interactions must never spawn particles or dots. This is intentional for product polish.
    */
   trigger(type: FeedbackType, buttonElement: HTMLElement, _tapX?: number, _tapY?: number): void {
     const config = FEEDBACK_CONFIGS[type]
     
-    // Animate button (UI-only)
+    // UI interactions must never spawn particles or dots. This is intentional for product polish.
+    // Animate button (UI-only: scale, opacity, glow)
     this.animateButton(buttonElement, type, config.animationDuration)
     
     // Haptic feedback (mobile)
@@ -56,7 +60,7 @@ export class MicroFeedback {
       this.triggerHaptic(config.hapticType)
     }
     
-    // NO particle bursts - UI feedback is UI-only
+    // NO particle bursts, NO canvas circles, NO dots, NO ripples - UI feedback is UI-only
   }
   
   /**

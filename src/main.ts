@@ -266,8 +266,11 @@ if (viewer.renderer) {
     })
     
     tapInteractions.setDoubleTapLikeHandler((x: number, y: number) => {
+      // UI interactions must never spawn particles or dots. This is intentional for product polish.
+      // Like affordance is now UI-only (no canvas drawing, no particles, no dots).
+      // The likeAffordance.trigger() call is intentionally empty - all feedback is via UI button animations.
       if (explorationLab.getConfig().doubleTapLike) {
-        likeAffordance.trigger(x, y)
+        likeAffordance.trigger(x, y) // No-op: UI-only feedback handled by button animations
       }
       
       // Double-tap zoom: zoom in to a sensible closer distance

@@ -527,6 +527,7 @@ export class TapInteractions {
   
   private handleDoubleTap(x: number, y: number): void {
     // Phase 1: Double tap = Like affordance (UI-only, no particles)
+    // UI interactions must never spawn particles or dots. This is intentional for product polish.
     if (this.doubleTapLikeHandler) {
       this.doubleTapLikeHandler(x, y)
     }
@@ -542,8 +543,12 @@ export class TapInteractions {
   /**
    * Trigger ripple burst: circular wave expanding from tap point.
    * DISABLED for clean demo - available in Lab toggle.
+   * UI interactions must never spawn particles or dots. This is intentional for product polish.
+   * This method is only for canvas interactions, never called from UI handlers.
    */
   private _triggerRippleBurst(x: number, y: number): void {
+    // UI interactions must never spawn particles or dots. This is intentional for product polish.
+    // This method is only for canvas interactions (disabled by default), never from UI handlers.
     if (!this.sourceCanvas) return
     
     const H = window.innerHeight
