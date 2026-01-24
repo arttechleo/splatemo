@@ -68,6 +68,14 @@ export const createHUD = () => {
           </select>
         </div>
         <div class="hud__effects-control">
+          <label class="hud__effects-label">Intensity Preset</label>
+          <select class="hud__effects-select" id="effects-intensity-preset">
+            <option value="subtle">Subtle</option>
+            <option value="medium" selected>Medium</option>
+            <option value="vivid">Vivid</option>
+          </select>
+        </div>
+        <div class="hud__effects-control">
           <label class="hud__effects-label">Intensity</label>
           <input type="range" class="hud__effects-slider" id="effects-intensity" min="0" max="1" step="0.01" value="0.5">
           <span class="hud__effects-value" id="effects-intensity-value">50%</span>
@@ -361,9 +369,10 @@ export const createHUD = () => {
   const effectsPanel = hud.querySelector<HTMLDivElement>('.hud__effects-panel')
   const effectsCloseButton = hud.querySelector<HTMLButtonElement>('.hud__close--effects')
   const effectsPresetSelect = hud.querySelector<HTMLSelectElement>('#effects-preset')
+  const effectsIntensityPresetSelect = hud.querySelector<HTMLSelectElement>('#effects-intensity-preset')
   const effectsIntensitySlider = hud.querySelector<HTMLInputElement>('#effects-intensity')
   const effectsIntensityValue = hud.querySelector<HTMLSpanElement>('#effects-intensity-value')
-  let onEffectsConfigChange: ((config: { preset: string; intensity: number; enabled: boolean }) => void) | null = null
+  let onEffectsConfigChange: ((config: { preset: string; intensity: number; enabled: boolean; intensityPreset?: string; boost?: number }) => void) | null = null
   let isEffectsPanelOpen = false
 
   if (effectsButton && effectsPanel) {
@@ -395,10 +404,27 @@ export const createHUD = () => {
       e.stopPropagation()
       if (onEffectsConfigChange) {
         const intensity = effectsIntensitySlider ? parseFloat(effectsIntensitySlider.value) : 0.5
+        const intensityPreset = effectsIntensityPresetSelect ? effectsIntensityPresetSelect.value : 'medium'
         onEffectsConfigChange({
           preset: effectsPresetSelect.value,
           intensity,
           enabled: effectsPresetSelect.value !== 'none',
+          intensityPreset,
+        })
+      }
+    })
+  }
+
+  if (effectsIntensityPresetSelect) {
+    effectsIntensityPresetSelect.addEventListener('change', (e) => {
+      e.stopPropagation()
+      if (onEffectsConfigChange && effectsPresetSelect && effectsIntensitySlider) {
+        const intensity = parseFloat(effectsIntensitySlider.value)
+        onEffectsConfigChange({
+          preset: effectsPresetSelect.value,
+          intensity,
+          enabled: effectsPresetSelect.value !== 'none',
+          intensityPreset: effectsIntensityPresetSelect.value,
         })
       }
     })
@@ -409,17 +435,18 @@ export const createHUD = () => {
       e.stopPropagation()
       const value = parseFloat(effectsIntensitySlider.value)
       effectsIntensityValue.textContent = `${Math.round(value * 100)}%`
-      if (onEffectsConfigChange && effectsPresetSelect) {
+      if (onEffectsConfigChange && effectsPresetSelect && effectsIntensityPresetSelect) {
         onEffectsConfigChange({
           preset: effectsPresetSelect.value,
           intensity: value,
           enabled: effectsPresetSelect.value !== 'none',
+          intensityPreset: effectsIntensityPresetSelect.value,
         })
       }
     })
   }
 
-  const setEffectsConfigChangeHandler = (handler: (config: { preset: string; intensity: number; enabled: boolean }) => void) => {
+  const setEffectsConfigChangeHandler = (handler: (config: { preset: string; intensity: number; enabled: boolean; intensityPreset?: string; boost?: number }) => void) => {
     onEffectsConfigChange = handler
   }
 

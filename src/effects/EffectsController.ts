@@ -15,10 +15,14 @@ export type EffectPreset =
   | 'glitter'
   | 'glow-dissolve'
 
+export type EffectIntensityPreset = 'subtle' | 'medium' | 'vivid'
+
 export interface EffectConfig {
   preset: EffectPreset
   intensity: number // 0-1
   enabled: boolean
+  intensityPreset?: EffectIntensityPreset // Global intensity multiplier
+  boost?: number // Debug boost multiplier (default 1.0)
 }
 
 export class EffectsController {
@@ -30,6 +34,23 @@ export class EffectsController {
     preset: 'none',
     intensity: 0.5,
     enabled: false,
+    intensityPreset: 'medium',
+    boost: 1.0,
+  }
+  
+  // Intensity multipliers by preset
+  private readonly INTENSITY_MULTIPLIERS = {
+    subtle: 0.5,
+    medium: 1.0,
+    vivid: 3.0,
+  }
+  
+  // Get effective intensity multiplier (preset × boost)
+  // Returns multiplier to apply to base intensity
+  private getEffectiveIntensity(): number {
+    const presetMultiplier = this.INTENSITY_MULTIPLIERS[this.config.intensityPreset || 'medium']
+    const boost = this.config.boost || 1.0
+    return presetMultiplier * boost
   }
   
   // Snapshot management
@@ -134,25 +155,28 @@ export class EffectsController {
       return
     }
 
+    // Get effective intensity multiplier (preset × boost)
+    const intensityMultiplier = this.getEffectiveIntensity()
+    
     // Apply current effect preset
     switch (this.config.preset) {
       case 'waves':
-        this.applyWavesEffect(snapshot)
+        this.applyWavesEffect(snapshot, intensityMultiplier)
         break
       case 'disintegrate':
-        this.applyDisintegrateEffect(snapshot)
+        this.applyDisintegrateEffect(snapshot, intensityMultiplier)
         break
       case 'perlin-wave':
-        this.applyPerlinWaveEffect(snapshot)
+        this.applyPerlinWaveEffect(snapshot, intensityMultiplier)
         break
       case 'wind':
-        this.applyWindEffect(snapshot)
+        this.applyWindEffect(snapshot, intensityMultiplier)
         break
       case 'glitter':
-        this.applyGlitterEffect(snapshot)
+        this.applyGlitterEffect(snapshot, intensityMultiplier)
         break
       case 'glow-dissolve':
-        this.applyGlowDissolveEffect(snapshot)
+        this.applyGlowDissolveEffect(snapshot, intensityMultiplier)
         break
     }
 
@@ -160,7 +184,7 @@ export class EffectsController {
   }
 
   // Effect implementations
-  private applyWavesEffect(snapshot: HTMLCanvasElement): void {
+  private applyWavesEffect(snapshot: HTMLCanvasElement, intensityMultiplier: number): void {
     const H = window.innerHeight
     const intensity = this.config.intensity
     
@@ -180,35 +204,36 @@ export class EffectsController {
     const bandHeight = H * (0.14 + intensity * 0.1) // 14-24% of screen
     const bandCenterY = this.wavePosition * H
     
-    // Emit particles from active wave band
+    // Emit particles from active wave band with bright leading edge
     // Matches scroll disintegration: splat-derived particles with directional motion
-    // Intensity controls particle density and motion amount
+    const baseIntensity = 0.5 + intensity * 0.5
+    
+    // Leading edge (bright, high alpha)
     this.overlay.startAudioPulse({
       bandCenterY,
-      bandHeight,
-      direction: 'down', // Consistent direction for readable wavefront
-      intensity: 0.5 + intensity * 0.5, // Scales particle count and velocity
-      durationMs: 900, // Longer duration for smoother, more visible wave
+      bandHeight: bandHeight * 0.6, // Tighter leading edge
+      direction: 'down',
+      intensity: baseIntensity * 1.3, // 30% brighter leading edge
+      durationMs: 1100, // Extended duration for longer tail
       sourceCanvas: snapshot,
+      intensityMultiplier,
     })
     
-    // Add trailing wave for depth (creates richer wave with liquid feel)
-    // Only at higher intensities to avoid performance hit
-    if (intensity > 0.5) {
-      const trailingOffset = 0.12
-      const trailingY = ((this.wavePosition - trailingOffset + 1) % 1) * H
-      this.overlay.startAudioPulse({
-        bandCenterY: trailingY,
-        bandHeight: bandHeight * 0.65,
-        direction: 'down',
-        intensity: 0.25 + (intensity - 0.5) * 0.4,
-        durationMs: 700,
-        sourceCanvas: snapshot,
-      })
-    }
+    // Trailing fade (softer, wider)
+    const trailingOffset = 0.08
+    const trailingY = ((this.wavePosition - trailingOffset + 1) % 1) * H
+    this.overlay.startAudioPulse({
+      bandCenterY: trailingY,
+      bandHeight: bandHeight * 0.8,
+      direction: 'down',
+      intensity: baseIntensity * 0.6, // Softer trailing
+      durationMs: 900,
+      sourceCanvas: snapshot,
+      intensityMultiplier: intensityMultiplier * 0.7, // Slightly less intense trailing
+    })
   }
 
-  private applyDisintegrateEffect(snapshot: HTMLCanvasElement): void {
+  private applyDisintegrateEffect(snapshot: HTMLCanvasElement, intensityMultiplier: number): void {
     // Continuous dissolve loop - particles lift and reassemble
     const H = window.innerHeight
     const cycleTime = 4000 // 4 second cycle
@@ -236,14 +261,15 @@ export class EffectsController {
           bandHeight,
           direction,
           intensity: 0.4 + phaseIntensity * 0.6,
-          durationMs: 500,
+          durationMs: 700, // Extended duration
           sourceCanvas: snapshot,
+          intensityMultiplier,
         })
       }
     }
   }
 
-  private applyPerlinWaveEffect(snapshot: HTMLCanvasElement): void {
+  private applyPerlinWaveEffect(snapshot: HTMLCanvasElement, intensityMultiplier: number): void {
     // Similar to waves but with noise-warped band (liquid distortion)
     const H = window.innerHeight
     const intensity = this.config.intensity
@@ -266,12 +292,13 @@ export class EffectsController {
       bandHeight,
       direction: 'down',
       intensity: 0.4 + intensity * 0.6,
-      durationMs: 700,
+      durationMs: 900, // Extended duration
       sourceCanvas: snapshot,
+      intensityMultiplier,
     })
   }
 
-  private applyWindEffect(snapshot: HTMLCanvasElement): void {
+  private applyWindEffect(snapshot: HTMLCanvasElement, intensityMultiplier: number): void {
     // Constant directional drift with turbulence
     const intensity = this.config.intensity
     const H = window.innerHeight
@@ -294,13 +321,14 @@ export class EffectsController {
         bandHeight,
         direction: 'down',
         intensity: 0.3 + intensity * 0.5,
-        durationMs: 500,
+        durationMs: 700, // Extended duration
         sourceCanvas: snapshot,
+        intensityMultiplier,
       })
     }
   }
 
-  private applyGlitterEffect(snapshot: HTMLCanvasElement): void {
+  private applyGlitterEffect(snapshot: HTMLCanvasElement, intensityMultiplier: number): void {
     // Sparse sparkles from bright areas (galaxy glitter style)
     const intensity = this.config.intensity
     const sparkleRate = Math.floor(3 + intensity * 12)
@@ -355,14 +383,15 @@ export class EffectsController {
           bandHeight,
           direction: 'down',
           intensity: 0.7 + intensity * 0.3,
-          durationMs: 400 + Math.random() * 200, // Vary duration for twinkle
+          durationMs: 500 + Math.random() * 300, // Longer, varied duration for twinkle
           sourceCanvas: snapshot,
+          intensityMultiplier: intensityMultiplier * 1.2, // Extra boost for sparkles
         })
       }
     }
   }
 
-  private applyGlowDissolveEffect(snapshot: HTMLCanvasElement): void {
+  private applyGlowDissolveEffect(snapshot: HTMLCanvasElement, intensityMultiplier: number): void {
     // Dissolve with edge glow (particles bloom before fading)
     const intensity = this.config.intensity
     const cycleTime = 5000
@@ -386,8 +415,9 @@ export class EffectsController {
           bandHeight,
           direction: 'down',
           intensity: 0.5 + glowIntensity * 0.5,
-          durationMs: 900, // Longer duration for glow effect
+          durationMs: 1100, // Extended duration for glow effect
           sourceCanvas: snapshot,
+          intensityMultiplier: intensityMultiplier * 1.3, // Extra boost for glow
         })
       }
     }

@@ -97,6 +97,8 @@ hudResult.setEffectsConfigChangeHandler((config) => {
     preset: config.preset as any,
     intensity: config.intensity,
     enabled: config.enabled,
+    intensityPreset: (config.intensityPreset as any) || 'medium',
+    boost: config.boost || 1.0,
   })
 })
 

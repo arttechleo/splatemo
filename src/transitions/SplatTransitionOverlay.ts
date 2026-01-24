@@ -17,6 +17,7 @@ type Particle = {
   b: number
   a: number
   size: number
+  glow?: number // Optional glow alpha for hero particles
 }
 
 const TRANSITION_DURATION_MS = 1200
@@ -24,10 +25,10 @@ const TAIL_DURATION_MS = 250
 const MIN_PARTICLES = 1500
 const MAX_PARTICLES = 4000
 const ALPHA_THRESHOLD = 15
-const VY_BASE = 5.5
-const VX_SPREAD = 1.8
-const FALLOFF = 0.985
-const VELOCITY_DAMP = 0.995
+const VY_BASE = 6.5 // Increased from 5.5 for more visible motion
+const VX_SPREAD = 2.2 // Increased from 1.8 for wider spread
+const FALLOFF = 0.982 // Slower falloff (was 0.985) for longer tail
+const VELOCITY_DAMP = 0.992 // Less damping (was 0.995) for longer motion
 const JITTER_AMOUNT = 0.8
 const JITTER_DECAY = 0.92
 
@@ -71,12 +72,12 @@ export class SplatTransitionOverlay {
 
   private resize() {
     if (!this.overlay) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    this.overlay.width = window.innerWidth * dpr
-    this.overlay.height = window.innerHeight * dpr
+    const overlayDpr = Math.min(2, window.devicePixelRatio || 1)
+    this.overlay.width = window.innerWidth * overlayDpr
+    this.overlay.height = window.innerHeight * overlayDpr
     if (this.ctx) {
       this.ctx.setTransform(1, 0, 0, 1, 0, 0)
-      this.ctx.scale(dpr, dpr)
+      this.ctx.scale(overlayDpr, overlayDpr)
     }
   }
 
@@ -123,6 +124,7 @@ export class SplatTransitionOverlay {
     intensity: number
     durationMs: number
     sourceCanvas: HTMLCanvasElement | null
+    intensityMultiplier?: number // Global intensity boost (default 1.0)
   }): void {
     if (!DEBUG_TRANSITION_OVERLAY || !params.sourceCanvas || !this.ctx || !this.overlay) return
 
@@ -131,13 +133,18 @@ export class SplatTransitionOverlay {
       this.overlay.style.opacity = '1'
     }
 
+    // Apply intensity multiplier for visibility boost
+    const intensityMultiplier = params.intensityMultiplier || 1.0
+    const effectiveIntensity = Math.min(1.0, params.intensity * intensityMultiplier)
+    
     // Sample particles from the specified band
     const pulseParticles = this.captureBandSample(
       params.sourceCanvas,
       params.bandCenterY,
       params.bandHeight,
       params.direction,
-      params.intensity
+      effectiveIntensity,
+      intensityMultiplier
     )
 
     if (pulseParticles.length === 0) return
@@ -169,7 +176,8 @@ export class SplatTransitionOverlay {
     bandCenterY: number,
     bandHeight: number,
     direction: 'up' | 'down',
-    intensity: number
+    intensity: number,
+    intensityMultiplier: number = 1.0
   ): Particle[] {
     const w = source.width
     const h = source.height
@@ -206,11 +214,15 @@ export class SplatTransitionOverlay {
     const { data: d } = data
     const vySign = direction === 'up' ? -1 : 1
 
-    // Scale particle count by intensity
+    // Scale particle count by intensity and multiplier (3× more particles for visibility)
     const baseParticleCount = Math.floor((W * bandHeight) / 200)
+    const particleCountMultiplier = 1.0 + (intensityMultiplier - 1.0) * 2.5 // Scale up particle count
     const targetParticleCount = Math.max(
       Math.floor(baseParticleCount * 0.3),
-      Math.min(Math.floor(baseParticleCount * intensity), MAX_PARTICLES / 4)
+      Math.min(
+        Math.floor(baseParticleCount * intensity * particleCountMultiplier),
+        MAX_PARTICLES / 2 // Allow more particles per band
+      )
     )
 
     const bandPixels = w * canvasBandHeight
@@ -232,22 +244,36 @@ export class SplatTransitionOverlay {
         const x = (px / w) * W
         const y = (py / h) * H
         const brightness = (r + g + b) / (3 * 255)
-        const size = 1.2 + Math.random() * 2.3 + (1 - brightness) * 1.2
+        
+        // Increase particle size range (allow larger "hero" particles)
+        const baseSize = 1.5 + Math.random() * 2.5 + (1 - brightness) * 1.2
+        const heroChance = intensityMultiplier > 2.0 ? 0.15 : 0.05 // More hero particles at high intensity
+        const isHero = Math.random() < heroChance
+        const size = isHero 
+          ? baseSize * (2.5 + Math.random() * 2.0) // Hero particles: 2.5-4.5× larger
+          : baseSize * (1.0 + (intensityMultiplier - 1.0) * 0.6) // Regular particles: slightly larger
 
-        // Scale velocity by intensity
-        const velocityScale = 0.5 + intensity * 0.8
+        // Scale velocity by intensity (slightly faster for visibility)
+        const velocityScale = (0.6 + intensity * 0.7) * (1.0 + (intensityMultiplier - 1.0) * 0.3)
+
+        // Increase alpha for visibility (with glow effect for hero particles)
+        const baseAlpha = a / 255
+        const alphaBoost = 0.3 + (intensityMultiplier - 1.0) * 0.4 // Boost alpha by up to 70%
+        const particleAlpha = Math.min(1.0, baseAlpha * (1.0 + alphaBoost))
+        const glowAlpha = isHero ? particleAlpha * 1.4 : particleAlpha // Hero particles get extra glow
 
         particles.push({
           x: x + (Math.random() - 0.5) * JITTER_AMOUNT,
           y: y + (Math.random() - 0.5) * JITTER_AMOUNT,
-          vx: (Math.random() - 0.5) * VX_SPREAD * 2,
+          vx: (Math.random() - 0.5) * VX_SPREAD * 2.2, // Slightly wider spread
           vy: (Math.random() * 0.4 + 0.6) * VY_BASE * vySign * velocityScale,
           r,
           g,
           b,
-          a: a / 255,
+          a: particleAlpha,
           size,
-        })
+          glow: isHero ? glowAlpha : 0, // Store glow for rendering
+        } as Particle & { glow?: number })
         sampled++
 
         if (sampled >= targetParticleCount) break
@@ -263,7 +289,6 @@ export class SplatTransitionOverlay {
     const h = source.height
     if (w < 4 || h < 4) return
 
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
     const W = window.innerWidth
     const H = window.innerHeight
 
@@ -291,14 +316,22 @@ export class SplatTransitionOverlay {
     const { data: d } = data
     const vySign = this.direction === 'up' ? -1 : 1
 
+    // Adaptive particle count based on device capabilities
+    const deviceDpr = Math.min(2, window.devicePixelRatio || 1)
+    const isMobileDevice = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    const adaptiveMax = isMobileDevice 
+      ? Math.min(MAX_PARTICLES, Math.floor((W * H) / 350)) // More particles on mobile
+      : Math.min(MAX_PARTICLES * 1.2, Math.floor((W * H) / 300)) // Even more on desktop
+    
     const targetParticleCount = Math.max(
       MIN_PARTICLES,
-      Math.min(MAX_PARTICLES, Math.floor((W * H) / 400))
+      adaptiveMax
     )
 
     const totalPixels = w * h
     const pixelsPerParticle = totalPixels / targetParticleCount
-    const stride = Math.max(1, Math.floor(Math.sqrt(pixelsPerParticle)))
+    // Reduce stride for denser sampling (more particles)
+    const stride = Math.max(1, Math.floor(Math.sqrt(pixelsPerParticle) * 0.85))
 
     let sampled = 0
     for (let py = 0; py < h; py += stride) {
@@ -313,19 +346,33 @@ export class SplatTransitionOverlay {
         const x = (px / w) * W
         const y = (py / h) * H
         const brightness = (r + g + b) / (3 * 255)
-        const size = 1.2 + Math.random() * 2.3 + (1 - brightness) * 1.2
+        
+        // Increased size range with hero particles
+        const heroChance = 0.08 // 8% chance for hero particles
+        const isHero = Math.random() < heroChance
+        const baseSize = 1.5 + Math.random() * 2.8 + (1 - brightness) * 1.5
+        const size = isHero ? baseSize * (2.5 + Math.random() * 2.0) : baseSize
+        
+        // Increased alpha for visibility
+        const baseAlpha = a / 255
+        const alphaBoost = 0.4 // 40% alpha boost
+        const particleAlpha = Math.min(1.0, baseAlpha * (1.0 + alphaBoost))
+        const glowAlpha = isHero ? particleAlpha * 1.5 : 0
 
         this.particles.push({
           x: x + (Math.random() - 0.5) * JITTER_AMOUNT,
           y: y + (Math.random() - 0.5) * JITTER_AMOUNT,
-          vx: (Math.random() - 0.5) * VX_SPREAD * 2,
+          vx: (Math.random() - 0.5) * VX_SPREAD * 2.2,
           vy: (Math.random() * 0.4 + 0.6) * VY_BASE * vySign,
           r,
           g,
           b,
-          a: a / 255,
+          a: particleAlpha,
           size,
-        })
+          glow: glowAlpha,
+        } as Particle)
+        
+        void brightness // Used in size calculation
         sampled++
 
         if (sampled >= MAX_PARTICLES) break
@@ -336,7 +383,7 @@ export class SplatTransitionOverlay {
     this.debugInfo = {
       mode: 'pixelSnapshot',
       particleCount: sampled,
-      dpr,
+      dpr: deviceDpr,
       snapshotWidth: w,
       snapshotHeight: h,
     }
@@ -351,7 +398,7 @@ export class SplatTransitionOverlay {
     this.isFallback = true
     const W = window.innerWidth
     const H = window.innerHeight
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    const fallbackDpr = Math.min(2, window.devicePixelRatio || 1)
     const f = document.createElement('canvas')
     f.width = W
     f.height = H
@@ -363,7 +410,7 @@ export class SplatTransitionOverlay {
     this.debugInfo = {
       mode: 'fallback',
       particleCount: 0,
-      dpr,
+      dpr: fallbackDpr,
       snapshotWidth: w,
       snapshotHeight: h,
     }
@@ -438,10 +485,39 @@ export class SplatTransitionOverlay {
         p.vy *= VELOCITY_DAMP
         if (p.a < 0.02) continue
 
-        this.ctx.fillStyle = `rgba(${p.r},${p.g},${p.b},${p.a * this.overlayOpacity * fade})`
+        const finalAlpha = p.a * this.overlayOpacity * fade
+        const particle = p as Particle & { glow?: number }
+        
+        // Draw glow for hero particles (additive-like effect)
+        if (particle.glow && particle.glow > 0) {
+          const glowAlpha = particle.glow * this.overlayOpacity * fade * 0.4
+          const glowSize = p.size * 2.5
+          
+          // Outer glow (softer)
+          const glowGradient = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowSize)
+          glowGradient.addColorStop(0, `rgba(${p.r},${p.g},${p.b},${glowAlpha * 0.6})`)
+          glowGradient.addColorStop(0.5, `rgba(${p.r},${p.g},${p.b},${glowAlpha * 0.3})`)
+          glowGradient.addColorStop(1, `rgba(${p.r},${p.g},${p.b},0)`)
+          
+          this.ctx.fillStyle = glowGradient
+          this.ctx.beginPath()
+          this.ctx.arc(p.x, p.y, glowSize, 0, Math.PI * 2)
+          this.ctx.fill()
+        }
+        
+        // Draw main particle (brighter for visibility)
+        this.ctx.fillStyle = `rgba(${p.r},${p.g},${p.b},${finalAlpha})`
         this.ctx.beginPath()
         this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
         this.ctx.fill()
+        
+        // Add subtle highlight for all particles (increases visibility)
+        if (finalAlpha > 0.1) {
+          this.ctx.fillStyle = `rgba(255,255,255,${finalAlpha * 0.15})`
+          this.ctx.beginPath()
+          this.ctx.arc(p.x - p.size * 0.3, p.y - p.size * 0.3, p.size * 0.4, 0, Math.PI * 2)
+          this.ctx.fill()
+        }
         
         activeParticles.push(p)
       }
