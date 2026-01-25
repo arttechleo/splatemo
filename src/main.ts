@@ -664,6 +664,10 @@ let currentUrl: string | null = null
 let currentSceneHandle: number | null = null
 let pendingNavigation: 'next' | 'prev' | null = null
 
+// Single-flight guard to prevent concurrent load/unload
+let isBusy = false
+let pendingIndex: number | null = null
+
 const splatCache = new Map<string, string>()
 let splatEntries: SplatEntry[] = []
 let currentIndex = 0
@@ -853,8 +857,10 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
 }
 
 const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
-  if (loadState === 'LOADING') {
-    console.log('[LOAD] already in progress, ignoring request for index', index)
+  // Single-flight guard: if busy, queue only the latest request
+  if (isBusy) {
+    console.log('[LOCK] busy, queue index ->', index)
+    pendingIndex = index
     return
   }
 
@@ -864,10 +870,18 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     return
   }
 
+  // Check if this is the same index we're already on (skip redundant loads)
+  if (index === currentIndex && currentSceneHandle !== null) {
+    console.log('[LOAD] already at index', index, 'skipping redundant load')
+    return
+  }
+
+  // Acquire lock
+  isBusy = true
   loadState = 'LOADING'
   const loadId = ++activeLoadId
 
-  console.log('[LOAD] starting index', index, 'entry:', entry.id, 'loadId:', loadId)
+  console.log('[LOCK] begin load index', index, 'entry:', entry.id, 'loadId:', loadId)
 
   showPoster('Loading splat...')
   showLoading()
@@ -878,7 +892,6 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     // Check again if this load is still current
     if (loadId !== activeLoadId) {
       console.log('[LOAD] cancelled - stale loadId before state update', loadId, 'vs', activeLoadId)
-      loadState = 'IDLE'
       return
     }
 
@@ -890,15 +903,15 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
 
     loadState = 'IDLE'
     hideLoading()
-    console.log('[LOAD] complete index', index, 'entry:', entry.id)
+    console.log('[LOCK] end load index', index, 'entry:', entry.id)
 
-    // Prefetch next
+    // Prefetch next (safe - only does HTTP HEAD, never calls addSplatScene)
     const nextIndex = (currentIndex + 1) % splatEntries.length
     if (splatEntries[nextIndex]) {
       void prefetchSplat(splatEntries[nextIndex])
     }
 
-    // Process pending navigation
+    // Process pending navigation (deprecated - now handled by pendingIndex)
     if (pendingNavigation) {
       const direction = pendingNavigation
       pendingNavigation = null
@@ -906,7 +919,10 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
         direction === 'next'
           ? (currentIndex + 1) % splatEntries.length
           : (currentIndex - 1 + splatEntries.length) % splatEntries.length
-      void loadSplat(targetIndex)
+      // Queue through guarded loadSplat
+      if (targetIndex !== currentIndex) {
+        pendingIndex = targetIndex
+      }
     }
   } catch (error) {
     console.error('[LOAD] error', error)
@@ -917,17 +933,29 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
       splatTransitionOverlay.endTransition()
     }
 
-    // Retry once automatically
+    // Retry once automatically (goes through guarded loadSplat)
     if (retryCount === 0) {
       console.log('[LOAD] retrying once...')
       setTimeout(() => {
         void loadSplat(index, 1)
       }, 1000)
     } else {
-      // Show error toast
+      // Show error toast (retry goes through guarded loadSplat)
       showErrorToast('Failed to load splat — tap to retry', () => {
         void loadSplat(index, 0)
       })
+    }
+  } finally {
+    // Release lock
+    isBusy = false
+    loadState = 'IDLE'
+
+    // Drain pending request if any (only if different from current)
+    if (pendingIndex !== null && pendingIndex !== currentIndex) {
+      const nextPending = pendingIndex
+      pendingIndex = null
+      console.log('[LOCK] drain pending index ->', nextPending)
+      void loadSplat(nextPending)
     }
   }
 }
