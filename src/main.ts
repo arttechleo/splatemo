@@ -751,6 +751,7 @@ const waitForRAF = (): Promise<void> => {
 }
 
 const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => {
+  console.info('[DEBUG] entry keys:', Object.keys(entry), entry)
   const { url, source } = resolveSplatUrl(entry)
   const oldUrl = currentUrl
 
