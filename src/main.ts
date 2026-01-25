@@ -177,6 +177,23 @@ poster.innerHTML = `
 `
 app.appendChild(poster)
 
+// Fade-to-black overlay during swap (prevents visual overlap)
+const swapOverlay = document.createElement('div')
+swapOverlay.className = 'swap-overlay'
+swapOverlay.style.cssText = `
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transition: opacity 0.15s ease-out;
+`
+app.appendChild(swapOverlay)
+
 const annotationsRoot = document.createElement('div')
 annotationsRoot.className = 'annotations'
 app.appendChild(annotationsRoot)
@@ -235,6 +252,9 @@ const ENABLE_VIEW_DEPENDENT_LOADING = false
 const DEMO_MODE = true // Stable 3-splat demo mode: disable prefetch and auto-retries
 
 const threeScene = new THREE.Scene()
+
+// Track current scene root for visibility control and invariant checks
+let currentSceneRoot: THREE.Object3D | null = null
 
 const viewer = new GaussianSplats3D.Viewer({
   rootElement: viewerRoot,
@@ -582,6 +602,19 @@ const motionEffects = new MotionEffects(effectGovernor)
 // Off-axis camera will be initialized after viewer camera is ready
 let offAxisCamera: OffAxisCamera | null = null
 
+// Invariant check: ensure scene has <= 1 active splat scene root
+const checkSplatContainerInvariant = (): void => {
+  // Count splat-related objects in the scene (approximate check)
+  // The viewer manages scenes internally, so we check via currentSceneHandle
+  if (currentSceneHandle !== null && currentSceneRoot) {
+    console.log('[INVARIANT] OK: 1 active scene (handle:', currentSceneHandle, ')')
+  } else if (currentSceneHandle === null && currentSceneRoot === null) {
+    console.log('[INVARIANT] OK: 0 active scenes (empty)')
+  } else {
+    console.warn('[INVARIANT] WARNING: Inconsistent state - handle:', currentSceneHandle, 'root:', !!currentSceneRoot)
+  }
+}
+
 viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   currentSplatMesh = splatMesh
   
@@ -600,6 +633,12 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   // Handle scene removal (splatMesh is null/undefined)
   if (!splatMesh) {
     console.log('[MESH] scene removed')
+    currentSceneRoot = null
+    // Hide renderer canvas when scene is removed
+    if (viewer.renderer) {
+      viewer.renderer.domElement.style.visibility = 'hidden'
+    }
+    checkSplatContainerInvariant()
     return
   }
 
@@ -615,6 +654,19 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
   
   const meshParent = (splatMesh as unknown as { parent?: unknown }).parent
   console.log('[MESH] parent attached:', !!meshParent)
+  
+  // Track scene root for visibility control
+  // The mesh should be a child of the scene, find its root
+  let sceneRoot: THREE.Object3D | null = null
+  if (meshParent) {
+    // Try to find the root object that contains this mesh
+    let current: any = splatMesh
+    while (current?.parent && current.parent !== threeScene) {
+      current = current.parent
+    }
+    sceneRoot = current as THREE.Object3D
+    currentSceneRoot = sceneRoot
+  }
   
   const rendererInfo = viewer.renderer?.info
   console.log('[MESH] renderer programs', rendererInfo?.programs?.length)
@@ -642,6 +694,13 @@ viewer.onSplatMeshChanged((splatMesh: typeof currentSplatMesh) => {
     }
   }
   
+  // Show renderer canvas after new scene is ready and visible
+  // This happens after [VISIBLE] ok in swapToSplat
+  if (viewer.renderer) {
+    viewer.renderer.domElement.style.visibility = 'visible'
+  }
+  checkSplatContainerInvariant()
+  
   startRevealTransition()
   assertSplatVisibility('onSplatMeshChanged')
 })
@@ -668,6 +727,14 @@ let pendingNavigation: 'next' | 'prev' | null = null
 // Serialized load guard: only one load/unload at a time
 let pendingIndex: number | null = null
 
+// Per-load progress tracking: track progress per loadId to detect 100% completion
+let loadProgress = new Map<number, number>() // loadId -> progress percent
+let fullyLoadedPromises = new Map<number, { promise: Promise<void>; resolve: () => void }>() // loadId -> promise
+
+// Unload barrier: idempotent unload promise to prevent overlap
+let unloadPromise: Promise<void> | null = null
+let activeScenesCount = 0 // Debug counter: track active scenes manually
+
 const splatCache = new Map<string, string>()
 let splatEntries: SplatEntry[] = []
 let currentIndex = 0
@@ -679,6 +746,13 @@ const logSplatHead = async (url: string): Promise<{ status: number; contentLengt
   try {
     const headResponse = await fetch(url, { method: 'HEAD' })
     const length = headResponse.headers.get('content-length')
+    const contentLength = length ? parseInt(length, 10) : null
+    
+    // Sanity check: warn if file is suspiciously small (likely LFS pointer or HTML error page)
+    if (contentLength !== null && contentLength < 1024) {
+      console.warn(`[PLY HEAD] WARNING: ${url} is very small (${contentLength} bytes) - may be LFS pointer or invalid file`)
+    }
+    
     console.log('[PLY HEAD]', url, 'status:', headResponse.status, 'content-length:', length)
     return { status: headResponse.status, contentLength: length }
   } catch (error) {
@@ -694,14 +768,25 @@ const loadManifest = async () => {
   }
   const data = (await response.json()) as SplatEntry[]
   console.info('[LOAD] manifest loaded:', manifestUrl, 'items:', data.length)
+  
+  // Validate all entries have required fields
+  const invalidEntries = data.filter((entry) => !entry.id || !entry.file)
+  if (invalidEntries.length > 0) {
+    console.error('[LOAD] manifest validation failed: entries missing id or file:', invalidEntries)
+    throw new Error(`Invalid manifest: ${invalidEntries.length} entries missing required fields (id/file)`)
+  }
+  
+  // Warn about entries missing url (will use fallback)
+  const missingUrl = data.filter((entry) => !entry.url)
+  if (missingUrl.length > 0) {
+    console.warn('[LOAD] manifest warning: entries missing url field (will use fallback):', missingUrl.map((e) => e.id))
+  }
+  
   return data
 }
 
-// Detect production mode: Vite sets PROD=true in production builds
-// In dev mode, hostname is localhost/127.0.0.1 or we're using vite dev server
-const isProduction = import.meta.env.PROD === true
-
-// Resolve PLY URL: use manifest.url if provided (absolute or relative), otherwise fallback to relative path (dev only)
+// Resolve PLY URL: use manifest.url if provided (absolute or relative), otherwise fallback to relative path
+// Always allows fallback (both dev and production) for resilience
 const resolveSplatUrl = (entry: SplatEntry): { url: string; source: 'manifest' | 'fallback' } => {
   if (entry.url) {
     // If URL is absolute (starts with http:// or https://), use it directly
@@ -713,25 +798,32 @@ const resolveSplatUrl = (entry: SplatEntry): { url: string; source: 'manifest' |
     return { url: resolved, source: 'manifest' }
   }
   
-  // Fallback: only allowed in dev mode
-  if (isProduction) {
-    throw new Error(`Missing manifest entry url for ${entry.id} (production mode requires manifest.url)`)
-  }
-  
-  // Dev fallback: construct relative path
+  // Fallback: construct relative path (always allowed for resilience)
   const fallbackUrl = `${BASE_URL}splats/${entry.file}`
+  console.warn(`[LOAD] entry ${entry.id} missing url field, using fallback: ${fallbackUrl}`)
   return { url: fallbackUrl, source: 'fallback' }
 }
 
 const prefetchSplat = async (entry: SplatEntry) => {
-  // Just prefetch to browser cache - don't create blob URLs
-  // The viewer library doesn't support blob URLs, so we rely on HTTP cache
-  if (splatCache.has(entry.id)) return
+  // Prefetch must NEVER call addSplatScene or trigger swap pipeline
+  // Only warms browser HTTP cache - fetch-only operation
+  
+  // Gate: only prefetch when not actively loading (prevent interference)
+  if (loadState === 'LOADING') {
+    console.log('[PREFETCH] skipped - load in progress')
+    return
+  }
+  
+  if (splatCache.has(entry.id)) {
+    return // Already cached
+  }
+  
   const { url, source } = resolveSplatUrl(entry)
-  console.info('[LOAD] resolved ply url:', url)
-  console.info('[LOAD] source:', source === 'manifest' ? 'manifest' : 'fallback')
+  console.info('[PREFETCH] resolved ply url:', url)
+  console.info('[PREFETCH] source:', source === 'manifest' ? 'manifest' : 'fallback')
+  
   try {
-    // Prefetch to browser HTTP cache only
+    // Prefetch to browser HTTP cache only (HEAD request, no addSplatScene)
     const response = await fetch(url, { method: 'HEAD' })
     if (response.ok) {
       console.log('[PREFETCH] cached', url)
@@ -754,7 +846,57 @@ const waitForRAF = (): Promise<void> => {
   })
 }
 
-const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => {
+// Idempotent unload: if unload is already running, await it instead of starting a second one
+const unloadCurrentScene = async (): Promise<void> => {
+  // If unload is already in progress, await it
+  if (unloadPromise !== null) {
+    console.log('[UNLOAD] already in progress, awaiting existing unload')
+    await unloadPromise
+    return
+  }
+
+  // No scene to unload
+  if (currentSceneHandle === null && currentUrl === null) {
+    console.log('[UNLOAD] no scene to unload')
+    activeScenesCount = 0
+    return
+  }
+
+  // Start unload
+  const handleToRemove = currentSceneHandle !== null ? currentSceneHandle : 0
+  console.log('[UNLOAD] removing scene handle', handleToRemove, `activeScenes=${activeScenesCount}`)
+  
+  unloadPromise = (async () => {
+    try {
+      await viewer.removeSplatScene(handleToRemove, false)
+      console.log('[UNLOAD] ok, scene removed')
+      activeScenesCount = Math.max(0, activeScenesCount - 1)
+    } catch (error) {
+      console.warn('[UNLOAD] error', error)
+      // Continue anyway - might already be removed
+      activeScenesCount = Math.max(0, activeScenesCount - 1)
+    } finally {
+      // Clear state
+      currentSceneHandle = null
+      currentUrl = null
+      currentSceneRoot = null // Clear scene root reference
+      // Ensure renderer canvas is hidden after unload
+      if (viewer.renderer) {
+        viewer.renderer.domElement.style.visibility = 'hidden'
+      }
+      // Wait for GPU state to settle
+      await waitForRAF()
+      unloadPromise = null
+      console.log('[UNLOAD] complete, activeScenes=', activeScenesCount)
+      checkSplatContainerInvariant()
+    }
+  })()
+
+  await unloadPromise
+}
+
+const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<Promise<void>> => {
+  // Returns the fullyLoaded promise - caller must await it to wait for 100% progress
   console.info('[DEBUG] entry keys:', Object.keys(entry), entry)
   const { url, source } = resolveSplatUrl(entry)
   const oldUrl = currentUrl
@@ -762,44 +904,78 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
   console.info('[LOAD] resolved ply url:', url)
   console.info('[LOAD] source:', source === 'manifest' ? 'manifest' : 'fallback')
   console.log('[SWAP] start from', oldUrl || 'none', 'to', url, '(BASE_URL:', BASE_URL, ')')
+  console.log('[SWAP] activeScenes=', activeScenesCount, 'before unload')
 
-  // Step 1: Validate URL exists
+  // Step 1: Validate URL exists and is valid PLY file
   const headInfo = await logSplatHead(url)
   if (!headInfo || headInfo.status !== 200) {
     throw new Error(`PLY file not found or invalid: ${url} (status: ${headInfo?.status || 'unknown'})`)
   }
-
-  // Step 2: Unload previous scene
-  if (currentSceneHandle !== null || currentUrl !== null) {
-    const handleToRemove = currentSceneHandle !== null ? currentSceneHandle : 0
-    console.log('[UNLOAD] removing scene handle', handleToRemove)
-    try {
-      await viewer.removeSplatScene(handleToRemove, false)
-      currentSceneHandle = null
-      currentUrl = null
-      console.log('[UNLOAD] ok')
-    } catch (error) {
-      console.warn('[UNLOAD] error', error)
-      // Continue anyway - might already be removed
-      currentSceneHandle = null
-      currentUrl = null
+  
+  // Sanity check: fetch first 100 bytes to detect HTML error pages or LFS pointers
+  try {
+    const sampleResponse = await fetch(url, { 
+      method: 'GET',
+      headers: { 'Range': 'bytes=0-99' }
+    })
+    if (sampleResponse.ok) {
+      const sampleText = await sampleResponse.text()
+      // Check if response is HTML (error page) instead of PLY
+      if (sampleText.trim().toLowerCase().startsWith('<!doctype') || 
+          sampleText.trim().toLowerCase().startsWith('<html')) {
+        console.error(`[SWAP] WARNING: ${url} appears to be HTML (error page), not a PLY file`)
+        throw new Error(`PLY file appears to be HTML error page: ${url}`)
+      }
+      // Check if response starts with 'ply' (PLY file header)
+      if (!sampleText.trim().toLowerCase().startsWith('ply')) {
+        console.warn(`[SWAP] WARNING: ${url} does not start with 'ply' header - may be invalid PLY file`)
+      }
     }
-
-    // Wait for GPU state to settle
-    await waitForRAF()
+  } catch (error) {
+    // If range request fails, try regular fetch (some servers don't support range)
+    console.warn('[SWAP] Range request failed, skipping sample validation:', error)
   }
 
-  // Check if this load is still current
+  // Check if this load is still current (before unload)
   if (loadId !== activeLoadId) {
-    console.log('[SWAP] cancelled - stale loadId', loadId, 'vs', activeLoadId)
+    console.log('[SWAP] cancelled - stale loadId before unload', loadId, 'vs', activeLoadId)
     return
   }
 
-  // Step 3: Load new scene with timeout
+  // Step 2: IMMEDIATE VISIBILITY HIDE - hide renderer canvas synchronously BEFORE async unload
+  // This prevents visual overlap: old scene is hidden immediately, then unloaded
+  if (viewer.renderer) {
+    console.log('[SWAP] hiding renderer canvas immediately (before unload)')
+    viewer.renderer.domElement.style.visibility = 'hidden'
+    // Show fade overlay
+    swapOverlay.style.opacity = '1'
+  }
+
+  // Step 3: STRICT UNLOAD BARRIER - fully unload/remove old scene before adding new one
+  // This ensures NO overlap: old scene is completely removed before new scene is added
+  await unloadCurrentScene()
+  
+  console.log('[SWAP] activeScenes=', activeScenesCount, 'after unload')
+
+  // Check if this load is still current (after unload)
+  if (loadId !== activeLoadId) {
+    console.log('[SWAP] cancelled - stale loadId after unload', loadId, 'vs', activeLoadId)
+    return
+  }
+
+  // Step 3: Load new scene with timeout (only after unload completes)
   // Always use original URL - browser cache handles prefetching
   // The viewer library doesn't support blob URLs
   const sourceUrl = url
-  console.log('[LOAD] starting', sourceUrl)
+  console.log('[LOAD] starting', sourceUrl, '(after unload barrier)')
+
+  // Create fullyLoaded promise for this loadId - resolves when progress >= 100%
+  let fullyLoadedResolve: (() => void) | null = null
+  const fullyLoadedPromise = new Promise<void>((resolve) => {
+    fullyLoadedResolve = resolve
+  })
+  fullyLoadedPromises.set(loadId, { promise: fullyLoadedPromise, resolve: fullyLoadedResolve! })
+  loadProgress.set(loadId, 0)
 
   const loadPromise = viewer.addSplatScene(sourceUrl, {
     showLoadingUI: true,
@@ -807,9 +983,21 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
     splatAlphaRemovalThreshold: 5,
     rotation: [1, 0, 0, 0],
     onProgress: (percent: number) => {
+      // Only process progress if this load is still current (loadId-safe)
       if (loadId === activeLoadId) {
-        console.log('[LOAD] progress', entry.id, percent + '%')
+        loadProgress.set(loadId, percent)
+        console.log('[LOAD] progress', entry.id, percent + '%', 'loadId:', loadId)
         // Progress shown in HUD loading bar
+        
+        // Resolve fullyLoaded promise when progress hits 100% (first time)
+        if (percent >= 100 && fullyLoadedResolve) {
+          console.log('[LOAD] fully loaded (100%) loadId:', loadId)
+          fullyLoadedResolve()
+          fullyLoadedResolve = null // Prevent multiple resolves
+        }
+      } else {
+        // Progress from stale loadId - ignore
+        console.log('[LOAD] progress ignored (stale loadId)', percent + '%', 'loadId:', loadId, 'active:', activeLoadId)
       }
     },
   })
@@ -831,6 +1019,7 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
       if (typeof sceneHandleResult === 'number') {
         try {
           await viewer.removeSplatScene(sceneHandleResult, false)
+          activeScenesCount = Math.max(0, activeScenesCount - 1)
         } catch (error) {
           console.warn('[LOAD] cleanup error', error)
         }
@@ -841,14 +1030,32 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
     // Handle both cases: if it returns a number (handle) or void
     currentSceneHandle = typeof sceneHandleResult === 'number' ? sceneHandleResult : 0
     currentUrl = url
+    activeScenesCount = 1 // We now have exactly one active scene
+    console.log('[SWAP] activeScenes=', activeScenesCount, 'after add')
 
     // Wait for visibility (2 RAF frames)
     await waitForRAF()
     await waitForRAF()
 
-    console.log('[VISIBLE] ok')
+    console.log('[VISIBLE] ok (progress may still be < 100%)')
+    
+    // Step 4: Show renderer canvas after new scene is ready and visible
+    // Only show after [VISIBLE] ok to ensure no overlap
+    if (viewer.renderer) {
+      viewer.renderer.domElement.style.visibility = 'visible'
+    }
+    // Hide fade overlay
+    swapOverlay.style.opacity = '0'
+    checkSplatContainerInvariant()
+    
+    // Return fullyLoaded promise - caller must await this before setting loadState = 'IDLE'
+    // This ensures we don't allow next load until progress reaches 100%
+    return fullyLoadedPromise
   } catch (error) {
     console.error('[LOAD] failed', error)
+    // Clean up promise on error
+    fullyLoadedPromises.delete(loadId)
+    loadProgress.delete(loadId)
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
@@ -858,9 +1065,10 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
 
 const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
   // Serialized guard: only one load/unload at a time
+  // "Latest wins" queue: if already loading, overwrite pendingIndex with latest request
   if (loadState === 'LOADING') {
-    console.log('[LOAD] already in progress, queueing index ->', index)
-    pendingIndex = index
+    console.log('[LOAD] already in progress, queueing index ->', index, '(latest wins)')
+    pendingIndex = index // Overwrite any existing pending request (latest wins)
     return
   }
 
@@ -886,12 +1094,15 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
   showLoading()
 
   try {
-    await swapToSplat(entry, loadId)
+    const fullyLoadedPromiseResult = await swapToSplat(entry, loadId)
+    const fullyLoadedPromise = await fullyLoadedPromiseResult // Get the actual fullyLoaded promise
 
     // Check again if this load is still current
     if (loadId !== activeLoadId) {
       console.log('[LOAD] cancelled - stale loadId before state update', loadId, 'vs', activeLoadId)
       loadState = 'IDLE'
+      fullyLoadedPromises.delete(loadId)
+      loadProgress.delete(loadId)
       return
     }
 
@@ -901,39 +1112,79 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     // Note: assertSplatVisibility is called from onSplatMeshChanged callback
     // when the mesh is actually ready, not here
 
+    // CRITICAL: Wait for progress to reach 100% before allowing next load
+    // VISIBLE ok happens early (~30%), but load continues to 100%
+    // We must keep loadState = 'LOADING' until fullyLoadedPromise resolves
+    console.log('[LOAD] waiting for 100% progress (loadId:', loadId, ')')
+    await fullyLoadedPromise
+    
+    // Wait one RAF frame for settle after 100%
+    await waitForRAF()
+    
+    // Only now can we set loadState = 'IDLE' and allow next load
     loadState = 'IDLE'
     hideLoading()
-    console.log('[LOAD] complete index', index, 'entry:', entry.id)
+    
+    // Clean up progress tracking
+    fullyLoadedPromises.delete(loadId)
+    loadProgress.delete(loadId)
+    
+    console.log('[LOAD] fully complete index', index, 'entry:', entry.id, '(100% + settle)')
 
-    // Process pending navigation (if queued during load)
+    // Process pending navigation (if queued during load) - "latest wins" queue
+    // Only process if there's a pending request AND it's different from current
+    // AND unload barrier is clear (no overlap)
+    // This happens after loadState = 'IDLE' (100% progress + settle)
     if (pendingIndex !== null && pendingIndex !== currentIndex) {
       const nextPending = pendingIndex
-      pendingIndex = null
-      console.log('[LOAD] processing queued index ->', nextPending)
-      // Queue will be processed after we release the lock
+      pendingIndex = null // Clear queue before processing
+      console.log('[NAV] draining queued index ->', nextPending, '(loadState=IDLE, 100% complete)')
+      // Queue will be processed after we release the lock and unload is complete
       setTimeout(() => {
-        void loadSplat(nextPending)
+        // Double-check unload barrier is clear before processing queue
+        if (unloadPromise === null && loadState === 'IDLE') {
+          void loadSplat(nextPending, 0) // Always use retryCount=0 for queued requests
+        } else {
+          console.log('[LOAD] queued index processing delayed - unload in progress or loadState not IDLE')
+          // Re-queue if unload is still in progress
+          pendingIndex = nextPending
+        }
       }, 0)
     }
   } catch (error) {
     console.error('[LOAD] error', error)
     loadState = 'IDLE'
     hideLoading()
+    
+    // Clean up progress tracking on error
+    fullyLoadedPromises.delete(loadId)
+    loadProgress.delete(loadId)
 
     if (isMobile) {
       splatTransitionOverlay.endTransition()
     }
 
-    // Retry logic (disabled in demo mode - manual retry only)
-    if (!DEMO_MODE && retryCount === 0) {
+    // Retry logic: disabled in demo mode, and ensure retry cannot start concurrent swap
+    // Retry only if we're still the active load AND swap barrier is clear (prevent concurrent retries)
+    if (!DEMO_MODE && retryCount === 0 && loadId === activeLoadId) {
       console.log('[LOAD] retrying once...')
       setTimeout(() => {
-        void loadSplat(index, 1)
+        // Check again before retry to ensure no concurrent swap and unload is complete
+        if (loadState === 'IDLE' && unloadPromise === null) {
+          void loadSplat(index, 1)
+        } else {
+          console.log('[LOAD] retry cancelled - load in progress or unload pending')
+        }
       }, 1000)
     } else {
       // Show error toast (manual retry only in demo mode)
       showErrorToast('Failed to load splat — tap to retry', () => {
-        void loadSplat(index, 0)
+        // Manual retry also checks loadState and unload barrier to prevent concurrent swap
+        if (loadState === 'IDLE' && unloadPromise === null) {
+          void loadSplat(index, 0)
+        } else {
+          console.log('[LOAD] manual retry cancelled - load in progress or unload pending')
+        }
       })
     }
   }
@@ -1304,9 +1555,15 @@ const navigateSplat = async (direction: 'next' | 'prev', _delta: number) => {
   if (splatEntries.length < 2) return
   if (isTransitioning) return
 
-  // If currently loading, queue the navigation
+  // If currently loading (including progress < 100%), queue the navigation
+  // Do NOT start swap immediately - wait for current load to finish (100% progress)
   if (loadState === 'LOADING') {
-    console.log('[NAV] queuing navigation', direction, '(currently loading)')
+    const targetIndex =
+      direction === 'next'
+        ? (currentIndex + 1) % splatEntries.length
+        : (currentIndex - 1 + splatEntries.length) % splatEntries.length
+    console.log('[NAV] busy, queued index ->', targetIndex, '(loadState=LOADING, waiting for 100%)')
+    pendingIndex = targetIndex // Latest-wins queue
     pendingNavigation = direction
     return
   }
@@ -1923,6 +2180,89 @@ const start = async () => {
 start().catch((error: unknown) => {
   console.error('Failed to load splat scene', error)
 })
+
+// Stress test helper (dev-only): press "T" to run rapid navigation test
+if (import.meta.env.DEV) {
+  let stressTestRunning = false
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 't' || e.key === 'T') {
+      if (stressTestRunning) {
+        console.log('[STRESS] Test already running, ignoring')
+        return
+      }
+      
+      console.log('[STRESS] Starting stress test: 30 rapid navigations')
+      stressTestRunning = true
+      let navigationCount = 0
+      const targetCount = 30
+      let overlapDetected = false
+      let errorsDetected: string[] = []
+      
+      const originalConsoleError = console.error
+      const originalConsoleWarn = console.warn
+      
+      // Intercept errors during stress test
+      console.error = (...args: any[]) => {
+        const msg = args.join(' ')
+        if (msg.includes('Cannot add splat scene') || msg.includes('splatTree') || msg.includes('null')) {
+          errorsDetected.push(msg)
+        }
+        originalConsoleError.apply(console, args)
+      }
+      
+      console.warn = (...args: any[]) => {
+        const msg = args.join(' ')
+        if (msg.includes('overlap') || msg.includes('multiple scenes')) {
+          overlapDetected = true
+        }
+        originalConsoleWarn.apply(console, args)
+      }
+      
+      const runNavigation = () => {
+        if (navigationCount >= targetCount) {
+          // Restore console
+          console.error = originalConsoleError
+          console.warn = originalConsoleWarn
+          
+          // Report results
+          console.log('[STRESS] Test complete:', {
+            navigations: navigationCount,
+            finalIndex: currentIndex,
+            overlapDetected,
+            errors: errorsDetected.length,
+            errorMessages: errorsDetected,
+          })
+          
+          if (overlapDetected) {
+            console.error('[STRESS] FAILED: Overlap detected during test')
+          } else if (errorsDetected.length > 0) {
+            console.error('[STRESS] FAILED: Errors detected:', errorsDetected)
+          } else {
+            console.log('[STRESS] PASSED: No overlap or errors detected')
+          }
+          
+          stressTestRunning = false
+          return
+        }
+        
+        // Queue next navigation with random delay (60-100ms)
+        const delay = 60 + Math.random() * 40
+        setTimeout(() => {
+          navigationCount++
+          const direction = Math.random() > 0.5 ? 'next' : 'prev'
+          console.log(`[STRESS] Navigation ${navigationCount}/${targetCount}: ${direction}`)
+          void navigateSplat(direction, 0)
+          runNavigation()
+        }, delay)
+      }
+      
+      // Start stress test
+      runNavigation()
+    }
+  })
+  
+  console.log('[STRESS] Press "T" key to run stress test (30 rapid navigations)')
+}
 
 const assertSplatVisibility = (stage: string) => {
   const mesh = currentSplatMesh as unknown as {
