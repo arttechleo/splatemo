@@ -2,16 +2,19 @@
   {
     "id": "demo1",
     "name": "World 1",
-    "file": "demo1.ply"
+    "file": "demo1.ply",
+    "url": "/splats/demo1.ply"
   },
   {
     "id": "demo2",
     "name": "World 2",
-    "file": "demo2.ply"
+    "file": "demo2.ply",
+    "url": "/splats/demo2.ply"
   },
   {
     "id": "demo3",
     "name": "World 3",
-    "file": "demo3.ply"
+    "file": "demo3.ply",
+    "url": "/splats/demo3.ply"
   }
 ]
