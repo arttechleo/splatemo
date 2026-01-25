@@ -227,8 +227,10 @@ performanceController.onTierChange((tier) => {
 // Performance debug (optional, off by default)
 const performanceDebug = new PerformanceDebug(app)
 // Use BASE_URL to handle any base path configuration (defaults to '/')
-const BASE_URL = import.meta.env.BASE_URL || '/'
+// Ensure BASE_URL ends with '/' for proper path joining
+const BASE_URL = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') + '/'
 const manifestUrl = `${BASE_URL}splats/manifest.json`
+console.log('[INIT] BASE_URL:', BASE_URL, 'manifestUrl:', manifestUrl)
 const ENABLE_VIEW_DEPENDENT_LOADING = false
 
 const threeScene = new THREE.Scene()
@@ -723,7 +725,7 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
   const url = `${BASE_URL}splats/${entry.file}`
   const oldUrl = currentUrl
 
-  console.log('[SWAP] start from', oldUrl || 'none', 'to', url)
+  console.log('[SWAP] start from', oldUrl || 'none', 'to', url, '(BASE_URL:', BASE_URL, ')')
 
   // Step 1: Validate URL exists
   const headInfo = await logSplatHead(url)
