@@ -226,7 +226,9 @@ performanceController.onTierChange((tier) => {
 
 // Performance debug (optional, off by default)
 const performanceDebug = new PerformanceDebug(app)
-const manifestUrl = '/splats/manifest.json'
+// Use BASE_URL to handle any base path configuration (defaults to '/')
+const BASE_URL = import.meta.env.BASE_URL || '/'
+const manifestUrl = `${BASE_URL}splats/manifest.json`
 const ENABLE_VIEW_DEPENDENT_LOADING = false
 
 const threeScene = new THREE.Scene()
@@ -692,7 +694,7 @@ const prefetchSplat = async (entry: SplatEntry) => {
   // Just prefetch to browser cache - don't create blob URLs
   // The viewer library doesn't support blob URLs, so we rely on HTTP cache
   if (splatCache.has(entry.id)) return
-  const url = `/splats/${entry.file}`
+  const url = `${BASE_URL}splats/${entry.file}`
   try {
     // Prefetch to browser HTTP cache only
     const response = await fetch(url, { method: 'HEAD' })
@@ -718,7 +720,7 @@ const waitForRAF = (): Promise<void> => {
 }
 
 const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => {
-  const url = `/splats/${entry.file}`
+  const url = `${BASE_URL}splats/${entry.file}`
   const oldUrl = currentUrl
 
   console.log('[SWAP] start from', oldUrl || 'none', 'to', url)

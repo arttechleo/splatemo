@@ -1,0 +1,54 @@
+---
+description: Automatically push changes to git after making and testing them locally
+alwaysApply: true
+---
+
+# Auto-Push to Git After Local Testing
+
+## Workflow Rule
+
+After making code changes and verifying they work locally, **automatically push to git**.
+
+## Process
+
+1. **Make changes** - Edit files as requested
+2. **Test locally** - Verify the changes work (run dev server, check for errors, etc.)
+3. **Commit changes** - Stage and commit with a descriptive message
+4. **Push to remote** - Push to the current branch (usually `main`)
+
+## Git Commands
+
+When changes are complete and tested:
+
+```bash
+git add .
+git commit -m "Descriptive commit message"
+git push origin <branch-name>
+```
+
+## Commit Messages
+
+- Be descriptive and specific about what changed
+- Reference the task/feature if applicable
+- Keep messages concise but informative
+
+## Exceptions
+
+- **Don't push** if the user explicitly asks not to
+- **Don't push** if there are uncommitted changes from other work
+- **Don't push** if the working tree is dirty with unrelated changes
+- **Ask first** if unsure about pushing (e.g., force push scenarios)
+
+## Testing Before Push
+
+Before pushing, ensure:
+- Code compiles without errors
+- No obvious runtime errors
+- Changes work as intended
+- No sensitive data is committed
+
+## Branch Handling
+
+- Default to `main` branch unless another branch is active
+- Use `git push origin <current-branch>` to push to the current branch
+- If branch is behind remote, consider `git pull` first or inform the user
