@@ -649,6 +649,7 @@ type SplatEntry = {
   id: string
   name?: string
   file: string
+  url?: string // Absolute HTTPS URL for production, or relative path for dev
   cameraPoses?: Array<{
     position: [number, number, number]
     target: [number, number, number]
@@ -692,11 +693,25 @@ const loadManifest = async () => {
   return data
 }
 
+// Resolve PLY URL: use manifest.url if provided (absolute or relative), otherwise fallback to relative path
+const resolveSplatUrl = (entry: SplatEntry): string => {
+  if (entry.url) {
+    // If URL is absolute (starts with http:// or https://), use it directly
+    if (entry.url.startsWith('http://') || entry.url.startsWith('https://')) {
+      return entry.url
+    }
+    // If URL is relative, make it BASE_URL-safe
+    return entry.url.startsWith('/') ? entry.url : `${BASE_URL}${entry.url}`
+  }
+  // Fallback: construct relative path for dev/local
+  return `${BASE_URL}splats/${entry.file}`
+}
+
 const prefetchSplat = async (entry: SplatEntry) => {
   // Just prefetch to browser cache - don't create blob URLs
   // The viewer library doesn't support blob URLs, so we rely on HTTP cache
   if (splatCache.has(entry.id)) return
-  const url = `${BASE_URL}splats/${entry.file}`
+  const url = resolveSplatUrl(entry)
   try {
     // Prefetch to browser HTTP cache only
     const response = await fetch(url, { method: 'HEAD' })
@@ -722,7 +737,7 @@ const waitForRAF = (): Promise<void> => {
 }
 
 const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => {
-  const url = `${BASE_URL}splats/${entry.file}`
+  const url = resolveSplatUrl(entry)
   const oldUrl = currentUrl
 
   console.log('[SWAP] start from', oldUrl || 'none', 'to', url, '(BASE_URL:', BASE_URL, ')')
