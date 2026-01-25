@@ -665,8 +665,7 @@ let currentUrl: string | null = null
 let currentSceneHandle: number | null = null
 let pendingNavigation: 'next' | 'prev' | null = null
 
-// Single-flight guard to prevent concurrent load/unload
-let isBusy = false
+// Serialized load guard: only one load/unload at a time
 let pendingIndex: number | null = null
 
 const splatCache = new Map<string, string>()
@@ -858,9 +857,9 @@ const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => 
 }
 
 const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
-  // Single-flight guard: if busy, queue only the latest request
-  if (isBusy) {
-    console.log('[LOCK] busy, queue index ->', index)
+  // Serialized guard: only one load/unload at a time
+  if (loadState === 'LOADING') {
+    console.log('[LOAD] already in progress, queueing index ->', index)
     pendingIndex = index
     return
   }
@@ -878,11 +877,10 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
   }
 
   // Acquire lock
-  isBusy = true
   loadState = 'LOADING'
   const loadId = ++activeLoadId
 
-  console.log('[LOCK] begin load index', index, 'entry:', entry.id, 'loadId:', loadId)
+  console.log('[LOAD] begin load index', index, 'entry:', entry.id, 'loadId:', loadId)
 
   showPoster('Loading splat...')
   showLoading()
@@ -893,6 +891,7 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     // Check again if this load is still current
     if (loadId !== activeLoadId) {
       console.log('[LOAD] cancelled - stale loadId before state update', loadId, 'vs', activeLoadId)
+      loadState = 'IDLE'
       return
     }
 
@@ -904,28 +903,17 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
 
     loadState = 'IDLE'
     hideLoading()
-    console.log('[LOCK] end load index', index, 'entry:', entry.id)
+    console.log('[LOAD] complete index', index, 'entry:', entry.id)
 
-    // Prefetch next (disabled in demo mode)
-    if (!DEMO_MODE) {
-      const nextIndex = (currentIndex + 1) % splatEntries.length
-      if (splatEntries[nextIndex]) {
-        void prefetchSplat(splatEntries[nextIndex])
-      }
-    }
-
-    // Process pending navigation (deprecated - now handled by pendingIndex)
-    if (pendingNavigation) {
-      const direction = pendingNavigation
-      pendingNavigation = null
-      const targetIndex =
-        direction === 'next'
-          ? (currentIndex + 1) % splatEntries.length
-          : (currentIndex - 1 + splatEntries.length) % splatEntries.length
-      // Queue through guarded loadSplat
-      if (targetIndex !== currentIndex) {
-        pendingIndex = targetIndex
-      }
+    // Process pending navigation (if queued during load)
+    if (pendingIndex !== null && pendingIndex !== currentIndex) {
+      const nextPending = pendingIndex
+      pendingIndex = null
+      console.log('[LOAD] processing queued index ->', nextPending)
+      // Queue will be processed after we release the lock
+      setTimeout(() => {
+        void loadSplat(nextPending)
+      }, 0)
     }
   } catch (error) {
     console.error('[LOAD] error', error)
@@ -947,18 +935,6 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
       showErrorToast('Failed to load splat — tap to retry', () => {
         void loadSplat(index, 0)
       })
-    }
-  } finally {
-    // Release lock
-    isBusy = false
-    loadState = 'IDLE'
-
-    // Drain pending request if any (only if different from current)
-    if (pendingIndex !== null && pendingIndex !== currentIndex) {
-      const nextPending = pendingIndex
-      pendingIndex = null
-      console.log('[LOCK] drain pending index ->', nextPending)
-      void loadSplat(nextPending)
     }
   }
 }
