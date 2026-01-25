@@ -1,20 +1,224 @@
 [
   {
+    "id": "abstractphotography",
+    "name": "Abstractphotography",
+    "file": "abstractphotography.ply",
+    "url": "/splats/abstractphotography.ply"
+  },
+  {
+    "id": "bunchatext",
+    "name": "Bunchatext",
+    "file": "bunchatext.ply",
+    "url": "/splats/bunchatext.ply"
+  },
+  {
     "id": "demo1",
-    "name": "Demo 1",
+    "name": "Demo1",
     "file": "demo1.ply",
     "url": "/splats/demo1.ply"
   },
   {
     "id": "demo2",
-    "name": "Demo 2",
+    "name": "Demo2",
     "file": "demo2.ply",
     "url": "/splats/demo2.ply"
   },
   {
     "id": "demo3",
-    "name": "Demo 3",
+    "name": "Demo3",
     "file": "demo3.ply",
     "url": "/splats/demo3.ply"
+  },
+  {
+    "id": "earthimage1",
+    "name": "Earthimage1",
+    "file": "earthimage1.ply",
+    "url": "/splats/earthimage1.ply"
+  },
+  {
+    "id": "Gemini_Generated_Image_jnqfojjnqfojjnqf",
+    "name": "Gemini Generated Image Jnqfojjnqfojjnqf",
+    "file": "Gemini_Generated_Image_jnqfojjnqfojjnqf.ply",
+    "url": "/splats/Gemini_Generated_Image_jnqfojjnqfojjnqf.ply"
+  },
+  {
+    "id": "Gemini_Generated_Image_nnfhhqnnfhhqnnfh",
+    "name": "Gemini Generated Image Nnfhhqnnfhhqnnfh",
+    "file": "Gemini_Generated_Image_nnfhhqnnfhhqnnfh.ply",
+    "url": "/splats/Gemini_Generated_Image_nnfhhqnnfhhqnnfh.ply"
+  },
+  {
+    "id": "Gemini_Generated_Image_o9pw0so9pw0so9pw",
+    "name": "Gemini Generated Image O9pw0so9pw0so9pw",
+    "file": "Gemini_Generated_Image_o9pw0so9pw0so9pw.ply",
+    "url": "/splats/Gemini_Generated_Image_o9pw0so9pw0so9pw.ply"
+  },
+  {
+    "id": "girlsonbikes",
+    "name": "Girlsonbikes",
+    "file": "girlsonbikes.ply",
+    "url": "/splats/girlsonbikes.ply"
+  },
+  {
+    "id": "gs_Isetta_Car",
+    "name": "Gs Isetta Car",
+    "file": "gs_Isetta_Car.ply",
+    "url": "/splats/gs_Isetta_Car.ply"
+  },
+  {
+    "id": "naturewithreflection",
+    "name": "Naturewithreflection",
+    "file": "naturewithreflection.ply",
+    "url": "/splats/naturewithreflection.ply"
+  },
+  {
+    "id": "paintingBruegel",
+    "name": "Painting Bruegel",
+    "file": "paintingBruegel.ply",
+    "url": "/splats/paintingBruegel.ply"
+  },
+  {
+    "id": "primitveflatcolor",
+    "name": "Primitveflatcolor",
+    "file": "primitveflatcolor.ply",
+    "url": "/splats/primitveflatcolor.ply"
+  },
+  {
+    "id": "volcanoerupt",
+    "name": "Volcanoerupt",
+    "file": "volcanoerupt.ply",
+    "url": "/splats/volcanoerupt.ply"
+  },
+  {
+    "id": "whale",
+    "name": "Whale",
+    "file": "whale.ply",
+    "url": "/splats/whale.ply"
+  },
+  {
+    "id": "windowsxpWallpaper",
+    "name": "Windowsxp Wallpaper",
+    "file": "windowsxpWallpaper.ply",
+    "url": "/splats/windowsxpWallpaper.ply"
+  },
+  {
+    "id": "world1",
+    "name": "World1",
+    "file": "world1.ply",
+    "url": "/splats/world1.ply"
+  },
+  {
+    "id": "world10",
+    "name": "World10",
+    "file": "world10.ply",
+    "url": "/splats/world10.ply"
+  },
+  {
+    "id": "world11",
+    "name": "World11",
+    "file": "world11.ply",
+    "url": "/splats/world11.ply"
+  },
+  {
+    "id": "world12",
+    "name": "World12",
+    "file": "world12.ply",
+    "url": "/splats/world12.ply"
+  },
+  {
+    "id": "world13",
+    "name": "World13",
+    "file": "world13.ply",
+    "url": "/splats/world13.ply"
+  },
+  {
+    "id": "world14",
+    "name": "World14",
+    "file": "world14.ply",
+    "url": "/splats/world14.ply"
+  },
+  {
+    "id": "world15",
+    "name": "World15",
+    "file": "world15.ply",
+    "url": "/splats/world15.ply"
+  },
+  {
+    "id": "world16",
+    "name": "World16",
+    "file": "world16.ply",
+    "url": "/splats/world16.ply"
+  },
+  {
+    "id": "world18",
+    "name": "World18",
+    "file": "world18.ply",
+    "url": "/splats/world18.ply"
+  },
+  {
+    "id": "world19",
+    "name": "World19",
+    "file": "world19.ply",
+    "url": "/splats/world19.ply"
+  },
+  {
+    "id": "world2",
+    "name": "World2",
+    "file": "world2.ply",
+    "url": "/splats/world2.ply"
+  },
+  {
+    "id": "world20",
+    "name": "World20",
+    "file": "world20.ply",
+    "url": "/splats/world20.ply"
+  },
+  {
+    "id": "world21",
+    "name": "World21",
+    "file": "world21.ply",
+    "url": "/splats/world21.ply"
+  },
+  {
+    "id": "world3",
+    "name": "World3",
+    "file": "world3.ply",
+    "url": "/splats/world3.ply"
+  },
+  {
+    "id": "world4",
+    "name": "World4",
+    "file": "world4.ply",
+    "url": "/splats/world4.ply"
+  },
+  {
+    "id": "world5",
+    "name": "World5",
+    "file": "world5.ply",
+    "url": "/splats/world5.ply"
+  },
+  {
+    "id": "world6",
+    "name": "World6",
+    "file": "world6.ply",
+    "url": "/splats/world6.ply"
+  },
+  {
+    "id": "world7",
+    "name": "World7",
+    "file": "world7.ply",
+    "url": "/splats/world7.ply"
+  },
+  {
+    "id": "world8",
+    "name": "World8",
+    "file": "world8.ply",
+    "url": "/splats/world8.ply"
+  },
+  {
+    "id": "world9",
+    "name": "World9",
+    "file": "world9.ply",
+    "url": "/splats/world9.ply"
   }
 ]
