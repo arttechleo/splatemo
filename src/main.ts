@@ -232,6 +232,7 @@ const BASE_URL = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') + '/'
 const manifestUrl = `${BASE_URL}splats/manifest.json`
 console.log('[INIT] BASE_URL:', BASE_URL, 'manifestUrl:', manifestUrl)
 const ENABLE_VIEW_DEPENDENT_LOADING = false
+const DEMO_MODE = true // Stable 3-splat demo mode: disable prefetch and auto-retries
 
 const threeScene = new THREE.Scene()
 
@@ -905,10 +906,12 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
     hideLoading()
     console.log('[LOCK] end load index', index, 'entry:', entry.id)
 
-    // Prefetch next (safe - only does HTTP HEAD, never calls addSplatScene)
-    const nextIndex = (currentIndex + 1) % splatEntries.length
-    if (splatEntries[nextIndex]) {
-      void prefetchSplat(splatEntries[nextIndex])
+    // Prefetch next (disabled in demo mode)
+    if (!DEMO_MODE) {
+      const nextIndex = (currentIndex + 1) % splatEntries.length
+      if (splatEntries[nextIndex]) {
+        void prefetchSplat(splatEntries[nextIndex])
+      }
     }
 
     // Process pending navigation (deprecated - now handled by pendingIndex)
@@ -933,14 +936,14 @@ const loadSplat = async (index: number, retryCount = 0): Promise<void> => {
       splatTransitionOverlay.endTransition()
     }
 
-    // Retry once automatically (goes through guarded loadSplat)
-    if (retryCount === 0) {
+    // Retry logic (disabled in demo mode - manual retry only)
+    if (!DEMO_MODE && retryCount === 0) {
       console.log('[LOAD] retrying once...')
       setTimeout(() => {
         void loadSplat(index, 1)
       }, 1000)
     } else {
-      // Show error toast (retry goes through guarded loadSplat)
+      // Show error toast (manual retry only in demo mode)
       showErrorToast('Failed to load splat — tap to retry', () => {
         void loadSplat(index, 0)
       })
