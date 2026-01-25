@@ -689,29 +689,43 @@ const loadManifest = async () => {
     throw new Error(`Manifest fetch failed: ${response.status}`)
   }
   const data = (await response.json()) as SplatEntry[]
-  console.log('[MANIFEST] entries:', data.length)
+  console.info('[LOAD] manifest loaded:', manifestUrl, 'items:', data.length)
   return data
 }
 
-// Resolve PLY URL: use manifest.url if provided (absolute or relative), otherwise fallback to relative path
-const resolveSplatUrl = (entry: SplatEntry): string => {
+// Detect production mode: Vite sets PROD=true in production builds
+// In dev mode, hostname is localhost/127.0.0.1 or we're using vite dev server
+const isProduction = import.meta.env.PROD === true
+
+// Resolve PLY URL: use manifest.url if provided (absolute or relative), otherwise fallback to relative path (dev only)
+const resolveSplatUrl = (entry: SplatEntry): { url: string; source: 'manifest' | 'fallback' } => {
   if (entry.url) {
     // If URL is absolute (starts with http:// or https://), use it directly
     if (entry.url.startsWith('http://') || entry.url.startsWith('https://')) {
-      return entry.url
+      return { url: entry.url, source: 'manifest' }
     }
     // If URL is relative, make it BASE_URL-safe
-    return entry.url.startsWith('/') ? entry.url : `${BASE_URL}${entry.url}`
+    const resolved = entry.url.startsWith('/') ? entry.url : `${BASE_URL}${entry.url}`
+    return { url: resolved, source: 'manifest' }
   }
-  // Fallback: construct relative path for dev/local
-  return `${BASE_URL}splats/${entry.file}`
+  
+  // Fallback: only allowed in dev mode
+  if (isProduction) {
+    throw new Error(`Missing manifest entry url for ${entry.id} (production mode requires manifest.url)`)
+  }
+  
+  // Dev fallback: construct relative path
+  const fallbackUrl = `${BASE_URL}splats/${entry.file}`
+  return { url: fallbackUrl, source: 'fallback' }
 }
 
 const prefetchSplat = async (entry: SplatEntry) => {
   // Just prefetch to browser cache - don't create blob URLs
   // The viewer library doesn't support blob URLs, so we rely on HTTP cache
   if (splatCache.has(entry.id)) return
-  const url = resolveSplatUrl(entry)
+  const { url, source } = resolveSplatUrl(entry)
+  console.info('[LOAD] resolved ply url:', url)
+  console.info('[LOAD] source:', source === 'manifest' ? 'manifest' : 'fallback')
   try {
     // Prefetch to browser HTTP cache only
     const response = await fetch(url, { method: 'HEAD' })
@@ -737,9 +751,11 @@ const waitForRAF = (): Promise<void> => {
 }
 
 const swapToSplat = async (entry: SplatEntry, loadId: number): Promise<void> => {
-  const url = resolveSplatUrl(entry)
+  const { url, source } = resolveSplatUrl(entry)
   const oldUrl = currentUrl
 
+  console.info('[LOAD] resolved ply url:', url)
+  console.info('[LOAD] source:', source === 'manifest' ? 'manifest' : 'fallback')
   console.log('[SWAP] start from', oldUrl || 'none', 'to', url, '(BASE_URL:', BASE_URL, ')')
 
   // Step 1: Validate URL exists
